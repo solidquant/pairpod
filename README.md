@@ -1,6 +1,13 @@
 # pairpod
 
+[![npm version](https://img.shields.io/npm/v/pairpod.svg)](https://www.npmjs.com/package/pairpod)
+[![npm downloads](https://img.shields.io/npm/dm/pairpod.svg)](https://www.npmjs.com/package/pairpod)
+[![node](https://img.shields.io/node/v/pairpod.svg)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/pairpod.svg)](./LICENSE)
+
 Run terminals and Claude Code sessions from your phone, through a Telegram bot.
+
+Install: `npm install -g pairpod` ([npmjs.com/package/pairpod](https://www.npmjs.com/package/pairpod))
 
 Point pairpod at a backend (a Docker container, an SSH host, or the machine the bot runs on) and it gives you a real terminal inside a Telegram mini app. Start a plain shell or a Claude Code session, attach from anywhere, scroll, copy, pinch to zoom. It's xterm over a WebSocket, so it behaves the way you'd expect.
 
