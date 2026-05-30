@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>pairpod terminal</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.min.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0a0a;
+        font-family: -apple-system, system-ui, sans-serif;
+      }
+      #app { display: flex; flex-direction: column; height: 100%; }
+      #term { flex: 1; min-height: 0; padding: 4px; }
+      #keys {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        padding: 6px;
+        background: #161616;
+        border-top: 1px solid #2a2a2a;
+      }
+      #ctl {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+      #arrows {
+        flex: 0 0 auto;
+        display: grid;
+        grid-template-columns: repeat(3, 38px);
+        grid-auto-rows: 32px;
+        gap: 4px;
+      }
+      #arrows .sp { visibility: hidden; }
+      .key {
+        padding: 8px 10px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 14px;
+        color: #e5e5e5;
+        background: #232323;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+      }
+      #ctl .key { min-width: 0; }
+      #arrows .key { padding: 0; font-size: 16px; }
+      .key:active { background: #3a3a3a; }
+      #nl { color: #9ad; }
+      #compose {
+        display: flex;
+        gap: 6px;
+        padding: 6px;
+        background: #161616;
+        border-top: 1px solid #2a2a2a;
+      }
+      #input {
+        flex: 1;
+        min-width: 0;
+        resize: none;
+        max-height: 120px;
+        padding: 8px 10px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: clamp(14px, 3.4vw, 16px);
+        line-height: 1.35;
+        color: #e5e5e5;
+        background: #0a0a0a;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        outline: none;
+      }
+      #input::placeholder { font-size: 13px; opacity: 0.7; }
+      #send {
+        flex: 0 0 auto;
+        padding: 8px 14px;
+        font-size: 14px;
+        color: #0a0a0a;
+        background: #e5e5e5;
+        border: none;
+        border-radius: 6px;
+      }
+      #send:active { background: #b5b5b5; }
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(10, 10, 10, 0.85);
+      }
+      #overlay.show { display: flex; }
+      #overlay button {
+        padding: 10px 16px;
+        color: #e5e5e5;
+        background: #232323;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      #toast {
+        position: absolute;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 12px;
+        background: rgba(40, 40, 40, 0.96);
+        color: #e5e5e5;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        font-size: 13px;
+        opacity: 0;
+        transition: opacity 0.15s;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #toast.show { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="term"></div>
+      <div id="compose">
+        <textarea id="input" rows="1" placeholder="Message Claude…  (Enter sends, Shift+Enter = newline)"
+          autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
+        <button id="send">Send</button>
+      </div>
+      <div id="keys">
+        <div id="ctl">
+          <button class="key" data-key="esc">Esc</button>
+          <button class="key" data-key="tab">Tab</button>
+          <button class="key" data-key="stab">&#8679;Tab</button>
+          <button class="key" data-key="bksp">&#9003;</button>
+          <button class="key" data-key="ctrlc">^C</button>
+          <button class="key" data-key="clr">Clr</button>
+          <button class="key" id="nl">&#8679;&#9166;</button>
+          <button class="key" data-key="enter">&#9166;</button>
+        </div>
+        <div id="arrows">
+          <span class="sp"></span>
+          <button class="key" data-key="up">&#8593;</button>
+          <span class="sp"></span>
+          <button class="key" data-key="left">&#8592;</button>
+          <button class="key" data-key="down">&#8595;</button>
+          <button class="key" data-key="right">&#8594;</button>
+        </div>
+      </div>
+    </div>
+    <div id="overlay"><button id="reconnect">Disconnected — tap to reconnect</button></div>
+    <div id="toast"></div>
+
+    <script>
+      const ESC = String.fromCharCode(27);
+      const KEYS = {
+        esc: ESC,
+        tab: "\t",
+        stab: ESC + "[Z",
+        up: ESC + "[A",
+        down: ESC + "[B",
+        left: ESC + "[D",
+        right: ESC + "[C",
+        enter: "\r",
+        ctrlc: String.fromCharCode(3),
+        bksp: String.fromCharCode(127),
+        clr: String.fromCharCode(21),
+      };
+
+      const tg = window.Telegram && window.Telegram.WebApp;
+      if (tg) {
+        tg.ready();
+        tg.expand();
+        if (typeof tg.disableVerticalSwipes === "function") tg.disableVerticalSwipes();
+      }
+
+      const params = new URLSearchParams(location.search);
+      const pod = params.get("pod") || "";
+      const session = params.get("session") || "";
+
+      const term = new window.Terminal({
+        disableStdin: true,
+        cursorBlink: false,
+        fontFamily: '"JetBrains Mono", "Cascadia Code", Menlo, Monaco, monospace',
+        fontSize: 13,
+        scrollback: 1000,
+        allowProposedApi: true,
+        theme: {
+          background: "#0a0a0a",
+          foreground: "#e5e5e5",
+          cursor: "#0a0a0a",
+          cursorAccent: "#0a0a0a",
+          selectionBackground: "#444444",
+        },
+      });
+      const fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(document.getElementById("term"));
+
+      function loadRenderer() {
+        try {
+          const w = new window.WebglAddon.WebglAddon();
+          w.onContextLoss(() => w.dispose());
+          term.loadAddon(w);
+          return "webgl";
+        } catch (e) {}
+        try {
+          const c = new window.CanvasAddon.CanvasAddon();
+          term.loadAddon(c);
+          return "canvas";
+        } catch (e) {}
+        return "dom";
+      }
+      loadRenderer();
+      const savedFont = parseInt(localStorage.getItem("pp_fontsize") || "", 10);
+      if (savedFont >= 8 && savedFont <= 28) term.options.fontSize = savedFont;
+      fit.fit();
+
+      const helper = document.querySelector("#term .xterm-helper-textarea");
+      if (helper) {
+        helper.readOnly = true;
+        helper.tabIndex = -1;
+        helper.setAttribute("inputmode", "none");
+        helper.setAttribute("aria-hidden", "true");
+      }
+
+      let ws = null;
+
+      function wsUrl() {
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const tgData = (tg && tg.initData) || "";
+        return (
+          proto + "://" + location.host + "/attach" +
+          "?pod=" + encodeURIComponent(pod) +
+          "&session=" + encodeURIComponent(session) +
+          "&cols=" + term.cols + "&rows=" + term.rows +
+          "&tgData=" + encodeURIComponent(tgData)
+        );
+      }
+
+      let reconnectAttempts = 0;
+      let reconnectTimer = null;
+
+      function showOverlay(show, msg) {
+        document.getElementById("overlay").classList.toggle("show", show);
+        if (msg) document.getElementById("reconnect").textContent = msg;
+      }
+
+      function handleClose(e) {
+        const fatal = e && (e.code === 4003 || e.code === 4004);
+        if (!fatal && reconnectAttempts < 5) {
+          reconnectAttempts++;
+          showOverlay(true, "Reconnecting… (" + reconnectAttempts + ")");
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, 800 * reconnectAttempts);
+          return;
+        }
+        if (e && e.code === 4004) showOverlay(true, "Session ended — start one from the bot, then reopen");
+        else if (e && e.code === 4003) showOverlay(true, "Unauthorized — reopen from the bot");
+        else showOverlay(true, "Disconnected — tap to reconnect");
+      }
+
+      function connect() {
+        clearTimeout(reconnectTimer);
+        showOverlay(false);
+        ws = new WebSocket(wsUrl());
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => { reconnectAttempts = 0; doRefit(); };
+        ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            const u8 = new Uint8Array(e.data);
+            updateModes(u8);
+            term.write(u8);
+          } else {
+            term.write(e.data);
+          }
+        };
+        ws.onclose = (e) => handleClose(e);
+        ws.onerror = () => {};
+      }
+
+      function send(data) {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+      }
+
+      let lastCols = 0;
+      let lastRows = 0;
+      let refitTimer = null;
+
+      function doRefit() {
+        fit.fit();
+        if (term.cols !== lastCols || term.rows !== lastRows) {
+          lastCols = term.cols;
+          lastRows = term.rows;
+          send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        }
+      }
+
+      function refit() {
+        clearTimeout(refitTimer);
+        refitTimer = setTimeout(doRefit, 100);
+      }
+
+      function setFontSize(px) {
+        const n = Math.max(8, Math.min(28, Math.round(px)));
+        if (n === term.options.fontSize) return;
+        term.options.fontSize = n;
+        localStorage.setItem("pp_fontsize", String(n));
+        doRefit();
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        if (e.key === "+" || e.key === "=") { e.preventDefault(); setFontSize(term.options.fontSize + 1); }
+        else if (e.key === "-" || e.key === "_") { e.preventDefault(); setFontSize(term.options.fontSize - 1); }
+        else if (e.key === "0") { e.preventDefault(); setFontSize(13); }
+      });
+
+      const ro = new ResizeObserver(() => refit());
+      ro.observe(document.getElementById("term"));
+      window.addEventListener("resize", refit);
+      if (tg && tg.onEvent) tg.onEvent("viewportChanged", refit);
+      setTimeout(refit, 150);
+      setTimeout(refit, 500);
+
+      for (const btn of document.querySelectorAll("[data-key]")) {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          if (btn.dataset.key === "tab") {
+            sendTab();
+            return;
+          }
+          const seq = KEYS[btn.dataset.key];
+          if (seq) send(seq);
+        });
+      }
+
+      const input = document.getElementById("input");
+      input.placeholder = "Message Claude…  ·  Enter to send";
+
+      function autoGrow() {
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 120) + "px";
+      }
+
+      function submitInput() {
+        const text = input.value;
+        input.value = "";
+        autoGrow();
+        input.focus();
+        if (text.length === 0) {
+          send("\r");
+          return;
+        }
+        // When the app accepts bracketed paste, wrap the text so embedded newlines stay
+        // literal (otherwise each \n submits a line). Send Enter separately to submit.
+        // The 80ms gap lets the app finish ingesting the text before the Enter registers.
+        if (bracketOn) {
+          send("\x1b[200~" + text + "\x1b[201~");
+        } else {
+          send(text);
+        }
+        setTimeout(() => send("\r"), 80);
+      }
+
+      function insertNewline() {
+        const s = input.selectionStart;
+        const end = input.selectionEnd;
+        input.value = input.value.slice(0, s) + "\n" + input.value.slice(end);
+        input.selectionStart = input.selectionEnd = s + 1;
+        autoGrow();
+        input.focus();
+      }
+
+      // The xterm is read-only, so a partial command can only reach the shell's line via the
+      // compose box. Flush it WITHOUT Enter, then send Tab, so completion has something to act on.
+      function sendTab() {
+        if (input.value.length > 0) {
+          send(input.value);
+          input.value = "";
+          autoGrow();
+        }
+        send("\t");
+        input.focus();
+      }
+
+      input.addEventListener("input", autoGrow);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          sendTab();
+          return;
+        }
+        if (e.key !== "Enter" || e.shiftKey) return;
+        e.preventDefault();
+        submitInput();
+      });
+      document.getElementById("send").addEventListener("click", (e) => {
+        e.preventDefault();
+        submitInput();
+      });
+      document.getElementById("nl").addEventListener("click", (e) => {
+        e.preventDefault();
+        insertNewline();
+      });
+
+      // Sniff the output stream for private-mode toggles (CSI ? <n> h/l). mouseOn drives
+      // scroll-forwarding; bracketOn tells us the app accepts bracketed paste (DECSET 2004),
+      // which we use to send multi-line input without each newline acting as a submit.
+      let mouseOn = false;
+      let bracketOn = false;
+
+      function updateModes(u8) {
+        for (let i = 0; i + 3 < u8.length; i++) {
+          if (u8[i] !== 0x1b || u8[i + 1] !== 0x5b || u8[i + 2] !== 0x3f) continue;
+          let j = i + 3;
+          const nums = [];
+          let cur = 0;
+          let has = false;
+          while (j < u8.length) {
+            const c = u8[j];
+            if (c >= 0x30 && c <= 0x39) { cur = cur * 10 + (c - 0x30); has = true; j++; }
+            else if (c === 0x3b) { nums.push(cur); cur = 0; j++; }
+            else break;
+          }
+          if (has) nums.push(cur);
+          if (j < u8.length && (u8[j] === 0x68 || u8[j] === 0x6c)) {
+            const on = u8[j] === 0x68;
+            for (const n of nums) {
+              if (n === 1000 || n === 1002 || n === 1003 || n === 1006) mouseOn = on;
+              if (n === 2004) bracketOn = on;
+            }
+          }
+        }
+      }
+
+      function sendWheel(up) {
+        if (!mouseOn) return;
+        const col = Math.max(1, Math.ceil(term.cols / 2));
+        const row = Math.max(1, Math.ceil(term.rows / 2));
+        send(ESC + "[<" + (up ? 64 : 65) + ";" + col + ";" + row + "M");
+      }
+
+      const termEl = document.getElementById("term");
+      const NOTCH = 18;
+      let lastTouchY = null;
+      let pinchDist = null;
+      let pinchFont = 0;
+      let lpTimer = null;
+      let selectMode = false;
+      let selAnchorRow = 0;
+      let touchStartX = 0;
+      let touchStartY = 0;
+      let touchMoved = false;
+      let lastTouchEnd = 0;
+      let toastTimer = null;
+
+      function fingerDist(t) {
+        return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      }
+
+      function toast(msg) {
+        const t = document.getElementById("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.remove("show"), 1300);
+      }
+
+      function rowFromY(y) {
+        const rect = termEl.getBoundingClientRect();
+        const cellH = Math.max(1, (termEl.clientHeight - 8) / term.rows);
+        const inView = Math.max(0, Math.min(term.rows - 1, Math.floor((y - rect.top - 4) / cellH)));
+        return term.buffer.active.viewportY + inView;
+      }
+
+      function copySelection() {
+        const text = term.getSelection();
+        if (!text) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(
+            () => toast("Copied " + text.length + " chars"),
+            () => toast("Copy blocked by browser")
+          );
+        } else {
+          toast("Clipboard unavailable");
+        }
+      }
+
+      termEl.addEventListener("touchstart", (e) => {
+        clearTimeout(lpTimer);
+        selectMode = false;
+        if (e.touches.length >= 2) {
+          pinchDist = fingerDist(e.touches);
+          pinchFont = term.options.fontSize;
+          lastTouchY = null;
+          return;
+        }
+        pinchDist = null;
+        lastTouchY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchMoved = false;
+        lpTimer = setTimeout(() => {
+          selectMode = true;
+          term.clearSelection();
+          selAnchorRow = rowFromY(touchStartY);
+          term.selectLines(selAnchorRow, selAnchorRow);
+          if (navigator.vibrate) navigator.vibrate(15);
+          toast("Select mode — drag, release to copy");
+        }, 400);
+      }, { passive: true });
+
+      termEl.addEventListener("touchmove", (e) => {
+        if (e.touches.length >= 2 && pinchDist) {
+          clearTimeout(lpTimer);
+          e.preventDefault();
+          setFontSize(pinchFont * (fingerDist(e.touches) / pinchDist));
+          return;
+        }
+        const y = e.touches[0].clientY;
+        if (selectMode) {
+          e.preventDefault();
+          const r = rowFromY(y);
+          term.selectLines(Math.min(selAnchorRow, r), Math.max(selAnchorRow, r));
+          return;
+        }
+        if (!touchMoved && Math.hypot(e.touches[0].clientX - touchStartX, y - touchStartY) > 10) {
+          touchMoved = true;
+          clearTimeout(lpTimer);
+        }
+        if (lastTouchY === null || !mouseOn) return;
+        e.preventDefault();
+        let dy = y - lastTouchY;
+        while (Math.abs(dy) >= NOTCH) {
+          sendWheel(dy > 0);
+          dy += dy > 0 ? -NOTCH : NOTCH;
+        }
+        lastTouchY = y - dy;
+      }, { passive: false });
+
+      termEl.addEventListener("touchend", (e) => {
+        clearTimeout(lpTimer);
+        if (e.touches.length < 2) pinchDist = null;
+        if (e.touches.length === 0) {
+          lastTouchEnd = Date.now();
+          if (selectMode) {
+            if (term.hasSelection()) copySelection();
+            selectMode = false;
+          } else if (!touchMoved) {
+            input.focus();
+          }
+          lastTouchY = null;
+        }
+      }, { passive: true });
+
+      termEl.addEventListener("mouseup", () => {
+        if (Date.now() - lastTouchEnd < 700) return;
+        if (term.hasSelection()) copySelection();
+        else input.focus();
+      });
+
+      termEl.addEventListener("wheel", (e) => {
+        if (!mouseOn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        sendWheel(e.deltaY < 0);
+      }, { passive: false, capture: true });
+
+      document.getElementById("overlay").addEventListener("click", () => {
+        reconnectAttempts = 0;
+        connect();
+      });
+
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) {
+          reconnectAttempts = 0;
+          connect();
+        }
+      });
+
+      connect();
+      input.focus();
+    </script>
+  </body>
+</html>

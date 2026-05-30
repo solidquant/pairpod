@@ -1,0 +1,17 @@
+{
+  "name": "@pairpod/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "The pairpod command (onboard, start).",
+  "bin": {
+    "pairpod": "./dist/index.js"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.7.0",
+    "@pairpod/bot": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Add SSH endpoint</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        background: #0a0a0a;
+        color: #e5e5e5;
+        font-family: -apple-system, system-ui, sans-serif;
+      }
+      #form { max-width: 560px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 18px; margin: 4px 0 16px; }
+      label { display: block; font-size: 13px; color: #9a9a9a; margin: 14px 0 5px; }
+      input, textarea, select {
+        width: 100%;
+        padding: 10px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 15px;
+        color: #e5e5e5;
+        background: #161616;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        outline: none;
+      }
+      textarea { resize: vertical; min-height: 120px; }
+      .row { display: flex; gap: 10px; }
+      .row > div { flex: 1; }
+      fieldset { border: 1px solid #2a2a2a; border-radius: 6px; margin: 14px 0 0; padding: 10px 12px; }
+      fieldset legend { font-size: 13px; color: #9a9a9a; padding: 0 6px; }
+      .opt { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; }
+      .opt input { width: auto; margin-top: 3px; }
+      .opt span { font-size: 14px; }
+      .opt small { display: block; color: #777; font-size: 12px; }
+      .note { color: #777; font-size: 12px; margin: 6px 0 0; line-height: 1.4; }
+      .note code { color: #9a9; }
+      .hidden { display: none; }
+      #submit {
+        width: 100%;
+        margin-top: 20px;
+        padding: 12px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #0a0a0a;
+        background: #e5e5e5;
+        border: none;
+        border-radius: 6px;
+      }
+      #submit:disabled { opacity: 0.5; }
+      #msg { margin-top: 14px; font-size: 14px; min-height: 18px; white-space: pre-wrap; }
+      #msg.err { color: #f08a8a; }
+      #msg.ok { color: #8af0a0; }
+    </style>
+  </head>
+  <body>
+    <div id="form">
+      <h1 id="title">Add SSH endpoint</h1>
+
+      <label for="label">Name</label>
+      <input id="label" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="prod db, staging…" />
+
+      <label for="host">Host</label>
+      <input id="host" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="example.com" />
+
+      <div class="row">
+        <div>
+          <label for="port">Port</label>
+          <input id="port" inputmode="numeric" value="22" />
+        </div>
+        <div>
+          <label for="username">Username</label>
+          <input id="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ubuntu" />
+        </div>
+      </div>
+
+      <label for="remoteCwd">Remote working directory</label>
+      <input id="remoteCwd" autocapitalize="off" autocorrect="off" spellcheck="false" value="~" />
+
+      <fieldset>
+        <legend>Auth method</legend>
+        <label class="opt">
+          <input type="radio" name="auth" value="agent" checked />
+          <span>ssh-agent on bot host<small>Uses SSH_AUTH_SOCK. Best for passphrase-protected keys.</small></span>
+        </label>
+        <label class="opt">
+          <input type="radio" name="auth" value="key_path" />
+          <span>Key file path on bot host<small>Key already lives on the bot machine.</small></span>
+        </label>
+        <label class="opt" id="opt-vault">
+          <input type="radio" name="auth" value="vault" />
+          <span>Paste private key<small>Encrypted at rest (AES-256-GCM) via the vault.</small></span>
+        </label>
+      </fieldset>
+
+      <div id="f-keypath" class="hidden">
+        <label for="keyPath">Private key path (on bot host)</label>
+        <input id="keyPath" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="/home/bot/.ssh/id_ed25519" />
+      </div>
+
+      <div id="f-vault" class="hidden">
+        <label for="privateKey">Private key (PEM / OpenSSH)</label>
+        <textarea id="privateKey" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+      </div>
+
+      <div id="f-pass" class="hidden">
+        <label for="passphrase">Key passphrase</label>
+        <input id="passphrase" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="only if the key is encrypted" />
+        <p class="note">Stored encrypted in the vault (needs <code>PAIRPOD_VAULT_KEY</code>). For passphrase-protected keys, <b>ssh-agent</b> is safer — it stores nothing.</p>
+      </div>
+
+      <button id="submit">Test &amp; add endpoint</button>
+      <div id="msg"></div>
+    </div>
+
+    <script>
+      const tg = window.Telegram && window.Telegram.WebApp;
+      if (tg) {
+        tg.ready();
+        tg.expand();
+      }
+
+      const $ = (id) => document.getElementById(id);
+      const msg = $("msg");
+      const initData = (tg && tg.initData) || "";
+      const editId = new URLSearchParams(location.search).get("id");
+      let endpointHasKey = false;
+
+      function authMethod() {
+        const el = document.querySelector('input[name="auth"]:checked');
+        return el ? el.value : "agent";
+      }
+
+      function syncFields() {
+        const m = authMethod();
+        $("f-keypath").classList.toggle("hidden", m !== "key_path");
+        $("f-vault").classList.toggle("hidden", m !== "vault");
+        $("f-pass").classList.toggle("hidden", m !== "key_path" && m !== "vault");
+        $("privateKey").placeholder =
+          m === "vault" && endpointHasKey
+            ? "leave blank to keep the current key"
+            : "-----BEGIN OPENSSH PRIVATE KEY-----";
+        $("passphrase").placeholder =
+          editId && endpointHasKey ? "leave blank to keep stored secret" : "only if the key is encrypted";
+      }
+
+      for (const el of document.querySelectorAll('input[name="auth"]')) {
+        el.addEventListener("change", syncFields);
+      }
+
+      fetch("/ssh/config")
+        .then((r) => r.json())
+        .then((c) => {
+          if (!c.vaultEnabled) $("opt-vault").classList.add("hidden");
+        })
+        .catch(() => {});
+
+      function setMsg(text, kind) {
+        msg.textContent = text;
+        msg.className = kind || "";
+      }
+
+      function selectAuth(method) {
+        const el = document.querySelector('input[name="auth"][value="' + method + '"]');
+        if (el) el.checked = true;
+      }
+
+      async function loadForEdit() {
+        $("title").textContent = "Edit SSH endpoint";
+        $("submit").textContent = "Test & save";
+        try {
+          const r = await fetch("/ssh/endpoints/" + encodeURIComponent(editId) + "?tgData=" + encodeURIComponent(initData));
+          const data = await r.json();
+          if (!data.ok) {
+            setMsg(data.error || "Could not load endpoint.", "err");
+            return;
+          }
+          const e = data.endpoint;
+          $("label").value = e.label || "";
+          $("host").value = e.host || "";
+          $("port").value = e.port || 22;
+          $("username").value = e.username || "";
+          $("remoteCwd").value = e.remoteCwd || "~";
+          $("keyPath").value = e.keyPath || "";
+          endpointHasKey = !!e.hasKey;
+          if (e.auth) selectAuth(e.auth);
+        } catch (err) {
+          setMsg("Could not load endpoint: " + err.message, "err");
+        } finally {
+          syncFields();
+        }
+      }
+
+      if (editId) loadForEdit();
+      else syncFields();
+
+      $("submit").addEventListener("click", async () => {
+        const auth = authMethod();
+        const privateKey = auth === "vault" ? $("privateKey").value : "";
+        const body = {
+          label: $("label").value.trim(),
+          host: $("host").value.trim(),
+          port: $("port").value.trim() || "22",
+          username: $("username").value.trim(),
+          remoteCwd: $("remoteCwd").value.trim() || "~",
+          auth,
+          keyPath: auth === "key_path" ? $("keyPath").value.trim() : "",
+          privateKey,
+          passphrase: auth === "vault" || auth === "key_path" ? $("passphrase").value : "",
+          tgData: initData,
+        };
+        if (!body.host || !body.username) {
+          setMsg("Host and username are required.", "err");
+          return;
+        }
+        if (auth === "vault" && !privateKey && !(editId && endpointHasKey)) {
+          setMsg("Paste a private key.", "err");
+          return;
+        }
+        $("submit").disabled = true;
+        setMsg("Connecting…", "");
+        try {
+          const r = await fetch(editId ? "/ssh/endpoints/" + encodeURIComponent(editId) : "/ssh/endpoints", {
+            method: editId ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await r.json();
+          if (data.ok) {
+            setMsg((editId ? "Saved " : "Added ") + data.id + ". Open /ssh or /pods in the bot.", "ok");
+            setTimeout(() => tg && tg.close(), 1200);
+          } else {
+            setMsg(data.error || "Failed to save endpoint.", "err");
+            $("submit").disabled = false;
+          }
+        } catch (e) {
+          setMsg("Request failed: " + e.message, "err");
+          $("submit").disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

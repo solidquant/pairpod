@@ -1,0 +1,10 @@
+packages:
+  - "packages/*"
+
+allowBuilds:
+  better-sqlite3: true
+  cpu-features: false
+  esbuild: true
+  node-pty: true
+  protobufjs: false
+  ssh2: false

@@ -1,0 +1,17 @@
+# environment
+.claude/
+.omc/
+.omx/
+.vscode/
+.DS_Store
+
+node_modules
+dist
+pairpod.db
+pairpod.db-*
+.env
+workspaces/*/
+
+# runtime state
+notify-chats.json
+*.tgz

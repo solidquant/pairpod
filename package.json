@@ -1,0 +1,21 @@
+{
+  "name": "pairpod",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Run terminals and Claude Code sessions from Telegram, on Docker, SSH, or host backends.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx watch packages/bot/src/main.ts",
+    "onboard": "tsx packages/cli/src/index.ts onboard",
+    "start": "tsx packages/cli/src/index.ts start",
+    "build": "tsc -p packages/bot/tsconfig.json && tsc -p packages/cli/tsconfig.json",
+    "typecheck": "tsc -p packages/bot/tsconfig.json --noEmit && tsc -p packages/cli/tsconfig.json --noEmit",
+    "docker:build": "docker build -t pairpod/claude:latest -f docker/claude.Dockerfile docker/",
+    "postinstall": "chmod +x node_modules/.pnpm/node-pty@*/node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.5"
+  }
+}
