@@ -6,5 +6,10 @@ allowBuilds:
   cpu-features: false
   esbuild: true
   node-pty: true
+  pairpod-bot: true
   protobufjs: false
   ssh2: false
+
+minimumReleaseAgeExclude:
+  - pairpod-bot@0.3.0
+  - pairpod@0.3.0
