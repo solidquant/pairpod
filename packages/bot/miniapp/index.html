@@ -72,7 +72,7 @@
         flex: 1;
         min-width: 0;
         resize: none;
-        max-height: 120px;
+        max-height: 300px;
         padding: 8px 10px;
         font-family: ui-monospace, Menlo, monospace;
         font-size: clamp(14px, 3.4vw, 16px);
@@ -291,7 +291,9 @@
       }
 
       function send(data) {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(data);
+        return true;
       }
 
       let lastCols = 0;
@@ -351,27 +353,31 @@
 
       function autoGrow() {
         input.style.height = "auto";
-        input.style.height = Math.min(input.scrollHeight, 120) + "px";
+        input.style.height = Math.min(input.scrollHeight, 300) + "px";
       }
 
       function submitInput() {
         const text = input.value;
-        input.value = "";
-        autoGrow();
-        input.focus();
+        // Don't clear the box until the text is actually on the wire — otherwise a closed
+        // socket silently eats the prompt.
         if (text.length === 0) {
           send("\r");
           return;
         }
         // When the app accepts bracketed paste, wrap the text so embedded newlines stay
         // literal (otherwise each \n submits a line). Send Enter separately to submit.
-        // The 80ms gap lets the app finish ingesting the text before the Enter registers.
-        if (bracketOn) {
-          send("\x1b[200~" + text + "\x1b[201~");
-        } else {
-          send(text);
+        // Delay before Enter scales with length: a large paste takes longer to land than a short one.
+        const sent = bracketOn
+          ? send("\x1b[200~" + text + "\x1b[201~")
+          : send(text);
+        if (!sent) {
+          toast("Not connected — text kept, reconnecting…");
+          return;
         }
-        setTimeout(() => send("\r"), 80);
+        input.value = "";
+        autoGrow();
+        input.focus();
+        setTimeout(() => send("\r"), Math.min(120 + Math.floor(text.length / 25), 1500));
       }
 
       function insertNewline() {
@@ -459,7 +465,7 @@
       let pinchFont = 0;
       let lpTimer = null;
       let selectMode = false;
-      let selAnchorRow = 0;
+      let selAnchor = null;
       let touchStartX = 0;
       let touchStartY = 0;
       let touchMoved = false;
@@ -478,11 +484,20 @@
         toastTimer = setTimeout(() => t.classList.remove("show"), 1300);
       }
 
-      function rowFromY(y) {
+      function cellFromXY(x, y) {
         const rect = termEl.getBoundingClientRect();
         const cellH = Math.max(1, (termEl.clientHeight - 8) / term.rows);
-        const inView = Math.max(0, Math.min(term.rows - 1, Math.floor((y - rect.top - 4) / cellH)));
-        return term.buffer.active.viewportY + inView;
+        const cellW = Math.max(1, (termEl.clientWidth - 8) / term.cols);
+        const col = Math.max(0, Math.min(term.cols - 1, Math.floor((x - rect.left - 4) / cellW)));
+        const vrow = Math.max(0, Math.min(term.rows - 1, Math.floor((y - rect.top - 4) / cellH)));
+        return { col, row: term.buffer.active.viewportY + vrow };
+      }
+
+      function selectBetween(a, b) {
+        const ai = a.row * term.cols + a.col;
+        const bi = b.row * term.cols + b.col;
+        const start = ai <= bi ? a : b;
+        term.select(start.col, start.row, Math.abs(bi - ai) + 1);
       }
 
       function copySelection() {
@@ -515,8 +530,8 @@
         lpTimer = setTimeout(() => {
           selectMode = true;
           term.clearSelection();
-          selAnchorRow = rowFromY(touchStartY);
-          term.selectLines(selAnchorRow, selAnchorRow);
+          selAnchor = cellFromXY(touchStartX, touchStartY);
+          selectBetween(selAnchor, selAnchor);
           if (navigator.vibrate) navigator.vibrate(15);
           toast("Select mode — drag, release to copy");
         }, 400);
@@ -532,8 +547,7 @@
         const y = e.touches[0].clientY;
         if (selectMode) {
           e.preventDefault();
-          const r = rowFromY(y);
-          term.selectLines(Math.min(selAnchorRow, r), Math.max(selAnchorRow, r));
+          selectBetween(selAnchor, cellFromXY(e.touches[0].clientX, y));
           return;
         }
         if (!touchMoved && Math.hypot(e.touches[0].clientX - touchStartX, y - touchStartY) > 10) {
@@ -565,7 +579,22 @@
         }
       }, { passive: true });
 
+      // App mouse-mode makes xterm swallow drag-to-select; reclaim it (Shift+drag = native chars).
+      let mouseSelAnchor = null;
+      termEl.addEventListener("mousedown", (e) => {
+        if (!mouseOn || e.button !== 0 || e.shiftKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        mouseSelAnchor = cellFromXY(e.clientX, e.clientY);
+        term.clearSelection();
+      }, true);
+      termEl.addEventListener("mousemove", (e) => {
+        if (mouseSelAnchor === null) return;
+        e.preventDefault();
+        selectBetween(mouseSelAnchor, cellFromXY(e.clientX, e.clientY));
+      }, true);
       termEl.addEventListener("mouseup", () => {
+        mouseSelAnchor = null;
         if (Date.now() - lastTouchEnd < 700) return;
         if (term.hasSelection()) copySelection();
         else input.focus();

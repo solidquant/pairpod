@@ -73,6 +73,7 @@ export async function attachExec(
   const duplex = new Duplex({
     read() {},
     write(chunk: Buffer, _enc, cb) { raw.write(chunk); cb(); },
+    destroy(err, cb) { raw.destroy(); cb(err); },
   });
 
   let buf = Buffer.alloc(0);
@@ -86,6 +87,7 @@ export async function attachExec(
     }
   });
   raw.on("end", () => duplex.push(null));
+  raw.on("close", () => { if (!duplex.destroyed) duplex.destroy(); });
   raw.on("error", (e) => duplex.destroy(e));
 
   return {
