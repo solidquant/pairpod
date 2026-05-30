@@ -59,7 +59,7 @@ export async function attachExec(
     AttachStdout: true,
     AttachStderr: true,
     Tty: true,
-    Env: ["TERM=xterm-256color"],
+    Env: ["TERM=xterm-256color", "COLORTERM=truecolor"],
   });
   const raw = await new Promise<Duplex>((resolve, reject) => {
     exec.start({ hijack: true, stdin: true }, (err: Error | null, s?: Duplex) => {
@@ -72,20 +72,11 @@ export async function attachExec(
 
   const duplex = new Duplex({
     read() {},
-    write(chunk: Buffer, _enc, cb) { raw.write(chunk); cb(); },
+    write(chunk: Buffer, _enc, cb) { raw.write(chunk, cb); },
     destroy(err, cb) { raw.destroy(); cb(err); },
   });
 
-  let buf = Buffer.alloc(0);
-  raw.on("data", (chunk: Buffer) => {
-    buf = Buffer.concat([buf, chunk]);
-    while (buf.length >= 8) {
-      const size = buf.readUInt32BE(4);
-      if (buf.length < 8 + size) break;
-      duplex.push(buf.subarray(8, 8 + size));
-      buf = buf.subarray(8 + size);
-    }
-  });
+  raw.on("data", (chunk: Buffer) => duplex.push(chunk));
   raw.on("end", () => duplex.push(null));
   raw.on("close", () => { if (!duplex.destroyed) duplex.destroy(); });
   raw.on("error", (e) => duplex.destroy(e));

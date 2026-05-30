@@ -364,12 +364,11 @@
           send("\r");
           return;
         }
-        // When the app accepts bracketed paste, wrap the text so embedded newlines stay
-        // literal (otherwise each \n submits a line). Send Enter separately to submit.
-        // Delay before Enter scales with length: a large paste takes longer to land than a short one.
+        // Text + submitting Enter go in one frame; a deferred Enter gets dropped when the
+        // mobile webview blurs on keyboard dismiss. Bracketed paste keeps newlines literal.
         const sent = bracketOn
-          ? send("\x1b[200~" + text + "\x1b[201~")
-          : send(text);
+          ? send("\x1b[200~" + text + "\x1b[201~\r")
+          : send(text + "\r");
         if (!sent) {
           toast("Not connected — text kept, reconnecting…");
           return;
@@ -377,7 +376,6 @@
         input.value = "";
         autoGrow();
         input.focus();
-        setTimeout(() => send("\r"), Math.min(120 + Math.floor(text.length / 25), 1500));
       }
 
       function insertNewline() {
