@@ -1,6 +1,7 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot, InlineKeyboard, type Context } from "grammy";
 import { run } from "@grammyjs/runner";
 import { botConfig } from "./config.js";
+import { updateEnv } from "./env.js";
 import { isAllowed, hasAllowlist } from "./access.js";
 import { setNotifierBot, recordChat } from "./notifier.js";
 import {
@@ -20,6 +21,24 @@ import {
 
 // chat id -> a pending rename target; the user's next text message becomes the name.
 const pendingRename = new Map<number, { podId: string; sessionId?: string }>();
+
+// When the allowlist holds a username but not yet a numeric id, the first private
+// message from that handle pins its id into the allowlist (ids can't be reassigned).
+async function maybePinUserId(ctx: Context): Promise<void> {
+  const from = ctx.from;
+  if (ctx.chat?.type !== "private" || !from?.id || !from.username) return;
+  if (!botConfig.allowedUsernames.includes(from.username.toLowerCase())) return;
+  if (botConfig.allowedUserIds.includes(from.id)) return;
+  botConfig.allowedUserIds.push(from.id);
+  try {
+    updateEnv({ TELEGRAM_ALLOWED_USER_IDS: botConfig.allowedUserIds.join(",") });
+  } catch (e) {
+    console.error("failed to persist pinned user id", e);
+  }
+  await ctx.reply(
+    `🔒 Pinned your numeric id ${from.id} to the allowlist — sturdier than @${from.username}, which Telegram lets people reassign.`
+  );
+}
 
 function miniappLink(podId: string, sessionId: string): string | null {
   if (!botConfig.miniappUrl) return null;
@@ -89,10 +108,16 @@ function podView(podId: string): { text: string; keyboard: InlineKeyboard } {
     return { text: `Pod ${podId} no longer exists.`, keyboard: kb };
   }
 
+  const hostDisabled = pod.kind === "local" && !botConfig.hostMode;
+
   for (const s of pod.sessions) {
-    const link = miniappLink(podId, s.id);
-    if (link) kb.webApp(`▶ ${sessName(s)}`, link);
-    else kb.text(`▶ ${sessName(s)} (set MINIAPP_URL)`, "pp:noapp");
+    if (hostDisabled) {
+      kb.text(`▶ ${sessName(s)} (host mode off)`, "pp:hostoff");
+    } else {
+      const link = miniappLink(podId, s.id);
+      if (link) kb.webApp(`▶ ${sessName(s)}`, link);
+      else kb.text(`▶ ${sessName(s)} (set MINIAPP_URL)`, "pp:noapp");
+    }
     kb.text("✏️", `pp:renamesess:${podId}:${s.id}`)
       .text("× kill", `pp:delsess:${podId}:${s.id}`)
       .row();
@@ -103,7 +128,7 @@ function podView(podId: string): { text: string; keyboard: InlineKeyboard } {
       .text("🔒 New (regular)", `pp:newsess:${podId}:regular`)
       .row();
   }
-  kb.text("🖥 New Terminal (shell)", `pp:newsess:${podId}:terminal`).row();
+  if (!hostDisabled) kb.text("🖥 New Terminal (shell)", `pp:newsess:${podId}:terminal`).row();
   kb.text("‹ Pods", "pp:pods")
     .text("✏️ rename", `pp:renamepod:${podId}`)
     .text("× delete", `pp:delpod:${podId}`);
@@ -113,9 +138,11 @@ function podView(podId: string): { text: string; keyboard: InlineKeyboard } {
   const lines = [
     header,
     "",
-    pod.sessions.length === 0
-      ? "No sessions yet. Start one below."
-      : "Tap ▶ to open a session terminal.",
+    hostDisabled
+      ? "Host mode is off. Re-enable it (onboard, or start --host-mode true) to open sessions, or delete this pod."
+      : pod.sessions.length === 0
+        ? "No sessions yet. Start one below."
+        : "Tap ▶ to open a session terminal.",
   ];
   return { text: lines.join("\n"), keyboard: kb };
 }
@@ -167,6 +194,7 @@ export function startBot(): void {
     }
     const chatId = ctx.chat?.id;
     if (chatId !== undefined) recordChat(chatId);
+    await maybePinUserId(ctx);
     await next();
   });
 
@@ -193,7 +221,9 @@ export function startBot(): void {
         "/sessions — list every session with an Open button",
         "/ssh — register/test/delete SSH endpoints (remote hosts as pods)",
         "",
-        "New pod backends: 🐳 Docker (a fresh container), 🔌 SSH (a remote host), or 💻 Host (a shell on the bot machine).",
+        botConfig.hostMode
+          ? "New pod backends: 🐳 Docker (a fresh container), 🔌 SSH (a remote host), or 💻 Host (a shell on the bot machine)."
+          : "New pod backends: 🐳 Docker (a fresh container) or 🔌 SSH (a remote host).",
         "",
         "Sessions come in three modes (Docker and SSH):",
         "⚡ skip-perms — claude --dangerously-skip-permissions",
@@ -234,6 +264,13 @@ export function startBot(): void {
     });
   });
 
+  bot.callbackQuery("pp:hostoff", async (ctx) => {
+    await ctx.answerCallbackQuery({
+      text: "Host mode is off. Enable it (onboard, or start --host-mode true) to open host sessions.",
+      show_alert: true,
+    });
+  });
+
   bot.callbackQuery("pp:pods", async (ctx) => {
     const v = podsView();
     await ctx.editMessageText(v.text, { reply_markup: v.keyboard });
@@ -247,7 +284,8 @@ export function startBot(): void {
   });
 
   bot.callbackQuery("pp:newpod", async (ctx) => {
-    const kb = new InlineKeyboard().text("🐳 Docker", "pp:newdocker").text("💻 Host", "pp:newhost");
+    const kb = new InlineKeyboard().text("🐳 Docker", "pp:newdocker");
+    if (botConfig.hostMode) kb.text("💻 Host", "pp:newhost");
     const link = sshFormLink();
     if (link) kb.webApp("🔌 SSH", link);
     else kb.text("🔌 SSH (set MINIAPP_URL)", "pp:noapp");
@@ -269,6 +307,10 @@ export function startBot(): void {
   });
 
   bot.callbackQuery("pp:newhost", async (ctx) => {
+    if (!botConfig.hostMode) {
+      await ctx.answerCallbackQuery({ text: "Host mode is disabled.", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery({ text: "Creating host pod…" });
     try {
       createLocalPod();
@@ -332,6 +374,11 @@ export function startBot(): void {
   bot.callbackQuery(/^pp:newsess:(.+):(danger|regular|terminal)$/, async (ctx) => {
     const podId = ctx.match[1];
     const mode = ctx.match[2] as SessionMode;
+    const pod = getPod(podId);
+    if (pod?.kind === "local" && !botConfig.hostMode) {
+      await ctx.answerCallbackQuery({ text: "Host mode is disabled.", show_alert: true });
+      return;
+    }
     await ctx.answerCallbackQuery({ text: "Starting session…" });
     try {
       await createSession(podId, mode);

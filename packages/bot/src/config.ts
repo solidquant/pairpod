@@ -40,4 +40,5 @@ export const botConfig = {
     .map((s) => s.trim().replace(/^@/, "").toLowerCase())
     .filter(Boolean),
   authMaxAgeSec: Number(process.env.MINIAPP_AUTH_MAX_AGE_SEC ?? 86400),
+  hostMode: (process.env.HOST_MODE ?? "false").toLowerCase() === "true",
 };

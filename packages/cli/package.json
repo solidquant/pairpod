@@ -1,6 +1,6 @@
 {
   "name": "pairpod",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "description": "Run terminals and Claude Code sessions from your phone via a Telegram bot, on Docker, SSH, or host backends.",

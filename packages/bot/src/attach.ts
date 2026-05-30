@@ -56,6 +56,11 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
     }
 
     if (pod.kind === "local") {
+      if (!botConfig.hostMode) {
+        req.log.warn("host attach rejected (host mode disabled)");
+        socket.close(4003, "host mode disabled");
+        return;
+      }
       const cols = q.cols ? parseInt(q.cols, 10) : 80;
       const rows = q.rows ? parseInt(q.rows, 10) : 24;
       attachLocal(socket, sessionId, cols, rows);

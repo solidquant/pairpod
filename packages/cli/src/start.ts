@@ -49,12 +49,13 @@ function startTunnel(port: string): Promise<{ url: string; child: ChildProcess }
   });
 }
 
-export async function start(useTunnel: boolean): Promise<void> {
+export async function start(useTunnel: boolean, hostMode?: string): Promise<void> {
   const env: NodeJS.ProcessEnv = { ...process.env, ...readEnv() };
   if (!env.TELEGRAM_BOT_TOKEN) {
     console.error("Not configured yet. Run:  pairpod onboard");
     process.exit(1);
   }
+  if (hostMode !== undefined) env.HOST_MODE = hostMode;
   const port = env.PORT || "40002";
 
   const children: ChildProcess[] = [];

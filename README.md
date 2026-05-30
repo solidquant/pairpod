@@ -14,7 +14,7 @@ Pods come in three kinds:
 |---|---|
 | 🐳 Docker | a throwaway, isolated container on the bot host |
 | 🔌 SSH | a remote machine reached over SSH |
-| 💻 Host | a shell on the bot machine itself |
+| 💻 Host | a shell on the bot machine itself — **off by default** (see [Host mode](#host-mode)) |
 
 Sessions come in three modes:
 
@@ -95,6 +95,7 @@ On the command line, with the `pairpod` CLI:
 - `pairpod onboard` — write `~/.pairpod/.env`
 - `pairpod start` — tunnel plus bot
 - `pairpod start --no-tunnel` — bot only, using a `MINIAPP_URL` you set yourself
+- `pairpod start --host-mode true|false` — allow/forbid Host pods for this run (overrides `HOST_MODE`)
 
 From a clone of the repo, run these through pnpm (`pnpm onboard`, `pnpm start`), plus two dev-only scripts:
 
@@ -119,7 +120,17 @@ Running Claude on an SSH host needs `claude` installed and logged in over there 
 
 A cloudflared quick tunnel terminates TLS at Cloudflare's edge, so a pasted key or passphrase is briefly in the clear there. If that bothers you, use ssh-agent (nothing leaves the host) or a fixed named tunnel.
 
-Docker pods are isolated. SSH pods are a separate machine. A Host pod, though, is an un-sandboxed shell on the bot machine (vault key in memory included), so only enable it somewhere you're comfortable handing out that access. Either way the bot only answers people on your allowlist, and the mini app checks Telegram's signed `initData` on every connection.
+The bot only answers people on your allowlist, and the mini app checks Telegram's signed `initData` on every connection — knowing the tunnel URL isn't enough to get in. Set the allowlist: the first private message from an allowed `@handle` pins its numeric id into `~/.pairpod/.env` automatically, so you end up locked to a stable id (handles can be reassigned) without looking it up.
+
+### Host mode
+
+Docker pods are isolated and SSH pods are a separate machine, but a **Host pod is an un-sandboxed shell on the bot machine itself**. So Host mode is **off by default** and gated behind a server-side flag — flipping it needs filesystem access to the bot host, which a remote Telegram user (even one who got past the allowlist) doesn't have:
+
+- `onboard` asks whether to enable it, with a warning.
+- `HOST_MODE=true` in `~/.pairpod/.env` turns it on persistently.
+- `pairpod start --host-mode true|false` overrides that for one run.
+
+When it's off the 💻 Host button is hidden and the server refuses to create or attach host sessions, even if a request is crafted by hand. When a host session does run, `PAIRPOD_VAULT_KEY` and the bot token are scrubbed from its environment, so a host shell can't read the vault master key. Even so, only enable Host mode on a box you're comfortable handing a full shell to.
 
 ## Config keys
 
@@ -128,8 +139,9 @@ Most people never touch these directly; `onboard` writes the ones that matter. F
 | Key | What it does |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | the bot token |
-| `TELEGRAM_ALLOWED_USERNAMES` / `..._USER_IDS` | who's allowed in (empty means anyone) |
+| `TELEGRAM_ALLOWED_USERNAMES` / `..._USER_IDS` | who's allowed in (empty means anyone); an allowed handle's id is pinned to `..._USER_IDS` on first message |
 | `PORT` | server port (default 40002) |
+| `HOST_MODE` | allow Host pods — unsandboxed shell on the bot machine (default `false`) |
 | `MINIAPP_URL` | public origin for the mini app; `start` fills this from the tunnel |
 | `PAIRPOD_PUBLIC_URL` | where SSH Claude sessions send notifications; defaults to `MINIAPP_URL` |
 | `PAIRPOD_VAULT_KEY` | vault master key |

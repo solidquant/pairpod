@@ -22,12 +22,13 @@ export function hasLocalSession(id: string): boolean {
 export function createLocalSession(id: string, cwd: string): void {
   if (sessions.has(id)) return;
   const shell = process.env.SHELL || "/bin/bash";
+  const { PAIRPOD_VAULT_KEY, TELEGRAM_BOT_TOKEN, ...env } = process.env;
   const term = pty.spawn(shell, [], {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
     cwd: cwd || os.homedir(),
-    env: process.env as { [key: string]: string },
+    env: env as { [key: string]: string },
   });
   const session: LocalSession = { pty: term, buffer: Buffer.alloc(0), socket: null };
 

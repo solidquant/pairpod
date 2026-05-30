@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { paths } from "./paths.js";
 
 export function parseEnv(text: string): Record<string, string> {
@@ -16,6 +17,22 @@ export function parseEnv(text: string): Record<string, string> {
     out[key] = val;
   }
   return out;
+}
+
+// Upsert keys into ~/.pairpod/.env, preserving existing ones.
+export function updateEnv(vars: Record<string, string>): void {
+  let existing: Record<string, string> = {};
+  try {
+    existing = parseEnv(fs.readFileSync(paths.env, "utf8"));
+  } catch {}
+  const merged = { ...existing, ...vars };
+  const body = Object.entries(merged)
+    .filter(([, v]) => v !== undefined && v !== "")
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  fs.mkdirSync(path.dirname(paths.env), { recursive: true });
+  fs.writeFileSync(paths.env, body + "\n", { mode: 0o600 });
+  fs.chmodSync(paths.env, 0o600);
 }
 
 // Load ~/.pairpod/.env into process.env without overriding already-set vars,

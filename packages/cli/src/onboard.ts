@@ -39,6 +39,16 @@ export async function onboard(): Promise<void> {
   });
   cancelled(port);
 
+  p.note(
+    "Host pods open an UNSANDBOXED shell on this machine — full access to its files,\nprocesses, and any keys it holds. Docker and SSH pods are isolated; Host is not.\nLeave this off unless you specifically need a shell on the bot host itself.",
+    "⚠ Host mode"
+  );
+  const hostMode = await p.confirm({
+    message: "Enable Host mode (unsandboxed shell on the bot machine)?",
+    initialValue: existing.HOST_MODE === "true",
+  });
+  cancelled(hostMode);
+
   const hadKey = Boolean(existing.PAIRPOD_VAULT_KEY);
   const vaultKey = existing.PAIRPOD_VAULT_KEY || crypto.randomBytes(32).toString("base64");
 
@@ -49,6 +59,7 @@ export async function onboard(): Promise<void> {
     TELEGRAM_ALLOWED_USERNAMES: (usernames as string).trim(),
     PORT: port as string,
     PAIRPOD_VAULT_KEY: vaultKey,
+    HOST_MODE: hostMode ? "true" : "false",
   });
   s.stop(`Wrote ${ENV_PATH}`);
 
