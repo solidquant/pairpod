@@ -10,7 +10,7 @@ A **pod** is a backend. A **session** is a terminal running on it.
 
 Pods come in three kinds:
 
-| | |
+| Kind | What it is |
 |---|---|
 | 🐳 Docker | a throwaway, isolated container on the bot host |
 | 🔌 SSH | a remote machine reached over SSH |
@@ -18,7 +18,7 @@ Pods come in three kinds:
 
 Sessions come in three modes:
 
-| | |
+| Mode | Runs |
 |---|---|
 | terminal | a plain shell |
 | regular | `claude` — you answer the permission prompts |
@@ -28,18 +28,32 @@ Docker and SSH pods run all three modes; Host pods are terminal-only. You can na
 
 ## Quick start
 
-You'll need Node 22, pnpm, and [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) (`brew install cloudflared`). Docker is optional; only Docker pods touch it.
+You'll need Node 22 and [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) (`brew install cloudflared`). Docker is optional; only Docker pods touch it.
+
+Install from npm:
 
 ```bash
-nvm use
-pnpm install
-pnpm onboard     # asks for a bot token, allowed users, and a port
-pnpm start       # opens the tunnel and starts the bot together
+npm install -g pairpod
+pairpod onboard     # asks for a bot token, allowed users, and a port
+pairpod start       # opens the tunnel and starts the bot together
 ```
 
 `onboard` points you at [@BotFather](https://t.me/BotFather) to create a bot, then writes everything to `~/.pairpod/.env` and generates a vault key for you. `start` brings up a cloudflared tunnel, points the bot at its URL, and runs both. One command, and Ctrl-C stops everything.
 
 Then message your bot `/pods`, create one, and tap ▶ to open a terminal.
+
+> pairpod needs Node 22 — its native deps (`better-sqlite3`, `node-pty`) won't load on Node 20. Check with `node -v`; `nvm install 22 && nvm use 22` if you're behind.
+
+### From source
+
+Working on pairpod itself? Clone the repo and use the workspace instead of the published package. You'll also need pnpm.
+
+```bash
+nvm use
+pnpm install
+pnpm onboard
+pnpm start
+```
 
 ## Where state lives
 
@@ -76,13 +90,16 @@ In Telegram:
 - `/ssh` — add, test, edit, or remove SSH hosts
 - `/whoami` — your id and username, for locking down the allowlist
 
-On the command line (`pairpod <cmd>` once installed, or `pnpm <cmd>` in the repo):
+On the command line, with the `pairpod` CLI:
 
-- `onboard` — write `~/.pairpod/.env`
-- `start` — tunnel plus bot
-- `start --no-tunnel` — bot only, using a `MINIAPP_URL` you set yourself
-- `dev` — hot-reload the bot, no tunnel (for development)
-- `build` — compile both packages to `dist/`
+- `pairpod onboard` — write `~/.pairpod/.env`
+- `pairpod start` — tunnel plus bot
+- `pairpod start --no-tunnel` — bot only, using a `MINIAPP_URL` you set yourself
+
+From a clone of the repo, run these through pnpm (`pnpm onboard`, `pnpm start`), plus two dev-only scripts:
+
+- `pnpm dev` — hot-reload the bot, no tunnel (for development)
+- `pnpm build` — compile both packages to `dist/`
 
 ## SSH hosts
 
@@ -120,8 +137,8 @@ Most people never touch these directly; `onboard` writes the ones that matter. F
 
 ## Troubleshooting
 
-- `ERR_DLOPEN_FAILED` or a `NODE_MODULE_VERSION` mismatch means you're not on Node 22. Run `nvm use`.
-- `posix_spawnp failed` on a Host session is node-pty's helper losing its execute bit. `pnpm install` re-fixes it (a postinstall handles it).
+- `ERR_DLOPEN_FAILED` or a `NODE_MODULE_VERSION` mismatch means you're not on Node 22. Switch (`nvm use 22`) and reinstall (`npm install -g pairpod`, or `pnpm install` in a clone).
+- `posix_spawnp failed` on a Host session is node-pty's helper losing its execute bit. Reinstalling re-fixes it (a postinstall handles it).
 - If the mini app looks stale after an update, Telegram has cached it. Fully close and reopen the web app.
 - `could not run cloudflared`: install it, or run `pairpod start --no-tunnel` with your own URL.
 - Old "Open" buttons that 404: Telegram bakes the URL into a message when it's sent, so after a new tunnel URL just re-run `/pods` to get fresh buttons.
