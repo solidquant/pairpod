@@ -1,15 +1,43 @@
 {
-  "name": "@pairpod/cli",
+  "name": "pairpod",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "The pairpod command (onboard, start).",
+  "description": "Run terminals and Claude Code sessions from your phone via a Telegram bot, on Docker, SSH, or host backends.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solidquant/pairpod.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "telegram-bot",
+    "claude-code",
+    "claude",
+    "terminal",
+    "web-terminal",
+    "ssh",
+    "docker",
+    "tmux",
+    "pty",
+    "mobile",
+    "self-hosted",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "pairpod": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepack": "tsc"
+  },
   "dependencies": {
     "@clack/prompts": "^0.7.0",
-    "@pairpod/bot": "workspace:*"
+    "pairpod-bot": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

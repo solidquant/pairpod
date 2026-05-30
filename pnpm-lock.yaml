@@ -72,7 +72,7 @@ importers:
       '@clack/prompts':
         specifier: ^0.7.0
         version: 0.7.0
-      '@pairpod/bot':
+      pairpod-bot:
         specifier: workspace:*
         version: link:../bot
     devDependencies:

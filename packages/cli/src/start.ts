@@ -7,7 +7,7 @@ import { readEnv } from "./env.js";
 const require = createRequire(import.meta.url);
 
 function resolveBotEntry(): { cmd: string; args: string[] } {
-  const botDir = path.dirname(require.resolve("@pairpod/bot/package.json"));
+  const botDir = path.dirname(require.resolve("pairpod-bot/package.json"));
   const distMain = path.join(botDir, "dist", "main.js");
   if (fs.existsSync(distMain)) return { cmd: process.execPath, args: [distMain] };
   return { cmd: "npx", args: ["tsx", path.join(botDir, "src", "main.ts")] };

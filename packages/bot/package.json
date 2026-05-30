@@ -1,10 +1,27 @@
 {
-  "name": "@pairpod/bot",
+  "name": "pairpod-bot",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "pairpod bot + mini-app server.",
+  "description": "pairpod bot + mini-app server (installed as a dependency of the pairpod CLI).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solidquant/pairpod.git",
+    "directory": "packages/bot"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "dist/main.js",
+  "files": [
+    "dist",
+    "miniapp",
+    "scripts/fix-pty.cjs"
+  ],
+  "scripts": {
+    "prepack": "tsc",
+    "postinstall": "node scripts/fix-pty.cjs"
+  },
   "dependencies": {
     "@fastify/static": "^8.0.0",
     "@fastify/websocket": "^11.0.0",
