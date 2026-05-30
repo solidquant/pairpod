@@ -1,7 +1,6 @@
 # pairpod
 
 [![npm version](https://img.shields.io/npm/v/pairpod.svg)](https://www.npmjs.com/package/pairpod)
-[![npm downloads](https://img.shields.io/npm/dm/pairpod.svg)](https://www.npmjs.com/package/pairpod)
 [![node](https://img.shields.io/node/v/pairpod.svg)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/pairpod.svg)](./LICENSE)
 
