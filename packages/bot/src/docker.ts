@@ -25,6 +25,7 @@ export async function createContainer(
     WorkingDir: "/workspace",
     Tty: true,
     OpenStdin: true,
+    Env: ["TERM=xterm-256color", "COLORTERM=truecolor", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"],
     HostConfig: {
       Binds: [`${workspacePath}:/workspace:rw`],
       ExtraHosts: ["host.docker.internal:host-gateway"],
@@ -76,7 +77,18 @@ export async function attachExec(
     destroy(err, cb) { raw.destroy(); cb(err); },
   });
 
-  raw.on("data", (chunk: Buffer) => duplex.push(chunk));
+  // dockerode's hijacked Tty exec stream is stdcopy-framed; strip the 8-byte headers
+  // (buffering partial frames across chunks) or the header bytes corrupt the display.
+  let buf = Buffer.alloc(0);
+  raw.on("data", (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 8) {
+      const size = buf.readUInt32BE(4);
+      if (buf.length < 8 + size) break;
+      duplex.push(buf.subarray(8, 8 + size));
+      buf = buf.subarray(8 + size);
+    }
+  });
   raw.on("end", () => duplex.push(null));
   raw.on("close", () => { if (!duplex.destroyed) duplex.destroy(); });
   raw.on("error", (e) => duplex.destroy(e));

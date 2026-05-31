@@ -128,6 +128,22 @@
         z-index: 10;
       }
       #toast.show { opacity: 1; }
+      #jump {
+        position: absolute;
+        right: 14px;
+        bottom: 132px;
+        width: 38px;
+        height: 38px;
+        border-radius: 19px;
+        background: rgba(40, 40, 40, 0.96);
+        color: #e5e5e5;
+        border: 1px solid #3a3a3a;
+        font-size: 18px;
+        line-height: 1;
+        display: none;
+        z-index: 11;
+      }
+      #jump.show { display: block; }
     </style>
   </head>
   <body>
@@ -161,6 +177,7 @@
     </div>
     <div id="overlay"><button id="reconnect">Disconnected — tap to reconnect</button></div>
     <div id="toast"></div>
+    <button id="jump" aria-label="Jump to bottom">↓</button>
 
     <script>
       const ESC = String.fromCharCode(27);
@@ -281,9 +298,9 @@
           if (e.data instanceof ArrayBuffer) {
             const u8 = new Uint8Array(e.data);
             updateModes(u8);
-            term.write(u8);
+            term.write(u8, updateJump);
           } else {
-            term.write(e.data);
+            term.write(e.data, updateJump);
           }
         };
         ws.onclose = (e) => handleClose(e);
@@ -344,7 +361,10 @@
             return;
           }
           const seq = KEYS[btn.dataset.key];
-          if (seq) send(seq);
+          if (seq) {
+            send(seq);
+            term.scrollToBottom();
+          }
         });
       }
 
@@ -358,17 +378,19 @@
 
       function submitInput() {
         const text = input.value;
+        send(JSON.stringify({ type: "cancelcopy" }));
         // Don't clear the box until the text is actually on the wire — otherwise a closed
         // socket silently eats the prompt.
         if (text.length === 0) {
           send("\r");
+          term.scrollToBottom();
           return;
         }
         // Text + submitting Enter go in one frame; a deferred Enter gets dropped when the
         // mobile webview blurs on keyboard dismiss. Bracketed paste keeps newlines literal.
         const sent = bracketOn
-          ? send("\x1b[200~" + text + "\x1b[201~\r")
-          : send(text + "\r");
+          ? send("\x1b[200~" + text + "\x1b[201~")
+          : send(text);
         if (!sent) {
           toast("Not connected — text kept, reconnecting…");
           return;
@@ -376,6 +398,16 @@
         input.value = "";
         autoGrow();
         input.focus();
+        term.scrollToBottom();
+        // deferred \r: low-latency docker glues a trailing \r into the paste so the app never
+        // sees Enter; a gap makes it a distinct keystroke. guard re-buffers if the socket dropped.
+        setTimeout(() => {
+          if (!send("\r")) {
+            input.value = text;
+            autoGrow();
+            toast("Reconnected — tap Send to submit");
+          }
+        }, Math.min(120 + Math.floor(text.length / 25), 1500));
       }
 
       function insertNewline() {
@@ -397,9 +429,10 @@
         }
         send("\t");
         input.focus();
+        term.scrollToBottom();
       }
 
-      input.addEventListener("input", autoGrow);
+      input.addEventListener("input", () => { autoGrow(); term.scrollToBottom(); });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Tab") {
           e.preventDefault();
@@ -615,6 +648,18 @@
           reconnectAttempts = 0;
           connect();
         }
+      });
+
+      const jump = document.getElementById("jump");
+      function updateJump() {
+        const b = term.buffer.active;
+        jump.classList.toggle("show", b.viewportY < b.baseY);
+      }
+      term.onScroll(updateJump);
+      jump.addEventListener("click", () => {
+        term.scrollToBottom();
+        updateJump();
+        input.focus();
       });
 
       connect();

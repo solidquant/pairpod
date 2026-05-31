@@ -46,7 +46,13 @@ export async function wireAttach(
     if (socket.readyState === socket.OPEN) socket.close(1011, "stream error");
   });
 
-  socket.on("message", async (data: Buffer | string) => {
+  // Process messages strictly in order: a cancelcopy must finish before the input it precedes.
+  let queue: Promise<void> = Promise.resolve();
+  socket.on("message", (data: Buffer | string) => {
+    queue = queue.then(() => onMessage(data)).catch((e) => log("message error", e));
+  });
+
+  async function onMessage(data: Buffer | string): Promise<void> {
     const raw = typeof data === "string" ? data : data.toString("utf8");
     if (raw.charCodeAt(0) === 0x7b) {
       try {
@@ -55,12 +61,18 @@ export async function wireAttach(
           await resize(msg.cols, msg.rows);
           return;
         }
+        // Scrolling puts tmux in copy-mode, which swallows typed input; drop out of it before
+        // the submit lands so keystrokes reach the program instead of copy-mode commands.
+        if (msg.type === "cancelcopy") {
+          await target.exec(["tmux", "send-keys", "-t", sessionId, "-X", "cancel"]);
+          return;
+        }
       } catch {}
     }
     if (stream.writable) {
       stream.write(typeof data === "string" ? Buffer.from(data) : data);
     }
-  });
+  }
 
   socket.on("close", () => {
     stream.destroy();
