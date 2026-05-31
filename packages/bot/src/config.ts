@@ -1,5 +1,4 @@
 import { z } from "zod";
-import crypto from "node:crypto";
 import { paths } from "./paths.js";
 
 const EnvSchema = z.object({
@@ -28,11 +27,7 @@ const miniappUrl = (process.env.MINIAPP_URL ?? "").replace(/\/$/, "");
 
 export const botConfig = {
   token,
-  hookToken: token ? crypto.createHash("sha256").update(token).digest("hex").slice(0, 32) : "",
   miniappUrl,
-  // Public origin a remote (SSH) host POSTs permission notifications to. Defaults to the
-  // mini-app origin; set PAIRPOD_PUBLIC_URL to decouple it (e.g. a stable named tunnel).
-  publicUrl: ((process.env.PAIRPOD_PUBLIC_URL ?? "").replace(/\/$/, "")) || miniappUrl,
   port: Number(process.env.PORT ?? 40002),
   allowedUserIds: config.telegramAllowedUserIds,
   allowedUsernames: (process.env.TELEGRAM_ALLOWED_USERNAMES ?? "")

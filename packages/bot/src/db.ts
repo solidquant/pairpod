@@ -77,4 +77,16 @@ function migrate(db: Database.Database): void {
       value INTEGER NOT NULL
     );
   `);
+
+  // Spool tailer progress per pod. byte_offset skips already-read bytes on a fresh
+  // connect; last_ts is the authoritative dedup watermark (max event ts delivered) so
+  // a reconnect, restart, or spool rotation never re-sends an event.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notify_cursor (
+      pod_id TEXT PRIMARY KEY,
+      byte_offset INTEGER NOT NULL DEFAULT 0,
+      last_ts INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+  `);
 }

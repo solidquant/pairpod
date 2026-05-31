@@ -1,5 +1,5 @@
 import Dockerode from "dockerode";
-import { Writable, Duplex } from "node:stream";
+import { Writable, Duplex, PassThrough, type Readable } from "node:stream";
 import { config } from "./config.js";
 import type { AgentDef } from "./agents.js";
 
@@ -97,6 +97,28 @@ export async function attachExec(
     stream: duplex,
     resize: (c: number, r: number) => exec.resize({ w: c, h: r }),
   };
+}
+
+export async function streamExec(
+  containerId: string,
+  cmd: string[]
+): Promise<{ stream: Readable; close: () => void }> {
+  const docker = getDocker();
+  const container = docker.getContainer(containerId);
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const raw = await new Promise<Duplex>((resolve, reject) => {
+    exec.start({ hijack: true, stdin: false }, (err, s) => {
+      if (err) return reject(err);
+      if (!s) return reject(new Error("No stream from exec"));
+      resolve(s as Duplex);
+    });
+  });
+  const out = new PassThrough();
+  docker.modem.demuxStream(raw, out, out);
+  raw.on("end", () => out.end());
+  raw.on("close", () => { if (!out.destroyed) out.destroy(); });
+  raw.on("error", (e) => out.destroy(e));
+  return { stream: out, close: () => { try { raw.destroy(); } catch {} } };
 }
 
 export async function execInContainer(

@@ -9,10 +9,11 @@ import { ensureHome } from "./paths.js";
 import { ensurePairpodNetwork } from "./network.js";
 import { errorHandler } from "./errors.js";
 import { attachRoutes } from "./attach.js";
-import { notifyRoutes } from "./notify.js";
+import { dismissRoutes } from "./dismiss.js";
 import { sshRoutes } from "./ssh.js";
 import { pruneLocalSessions } from "./store.js";
 import { startBot } from "./bot.js";
+import { startNotifyTailers } from "./notify-tailer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,7 +34,7 @@ export async function startServer(): Promise<void> {
 
   await app.register(fastifyWebsocket);
   await app.register(attachRoutes);
-  await app.register(notifyRoutes);
+  await app.register(dismissRoutes);
   await app.register(sshRoutes);
 
   const miniappDir = path.resolve(__dirname, "../miniapp");
@@ -55,4 +56,5 @@ export async function startServer(): Promise<void> {
 
   await app.listen({ port: botConfig.port, host: "0.0.0.0" });
   startBot();
+  startNotifyTailers();
 }

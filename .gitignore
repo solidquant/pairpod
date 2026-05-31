@@ -11,6 +11,8 @@ pairpod.db
 pairpod.db-*
 .env
 workspaces/*/
+tmp
+plan.md
 
 # runtime state
 notify-chats.json

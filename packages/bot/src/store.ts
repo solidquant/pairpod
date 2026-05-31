@@ -7,7 +7,6 @@ import { agents } from "./agents.js";
 import { nextPodId, nextSessionId, nextTerminalId } from "./naming.js";
 import { createContainer, removeContainer } from "./docker.js";
 import type { PodTarget } from "./targets/types.js";
-import { botConfig } from "./config.js";
 import { targetForPod, disposeTarget } from "./targets/index.js";
 import { SshTarget, type SshAuth } from "./targets/ssh.js";
 import { vaultEnabled, vaultPut, vaultRemove } from "./vault.js";
@@ -19,46 +18,43 @@ const POD_COLS =
   "id, container_id, kind, label, status, created_at, ssh_host, ssh_port, ssh_user, ssh_auth, " +
   "ssh_key_path, ssh_vault_ref, host_fingerprint, remote_cwd";
 
-// Node script (runs in the container) for Claude's Notification hook: reads the
-// hook payload on stdin, peeks at the transcript for the pending tool_use to
-// summarize what Claude is about to do, and POSTs it to bot's /notify.
+// Node script (runs on the target) for Claude's hooks. It is a dumb local writer:
+// it appends one structured event to ~/.claude/pairpod-events.jsonl and exits. The
+// bot tails that spool over the channel it already owns — no network, no bot address.
+// PermissionRequest carries tool_name/tool_input directly; the permission_prompt
+// path is a fallback for CLIs without PermissionRequest (a marker file suppresses the
+// duplicate) and defers tool description to the bot via transcriptPath.
 const NOTIFY_JS = `let d="";
 process.stdin.on("data",c=>d+=c);
 process.stdin.on("end",()=>{
   let j={};try{j=JSON.parse(d)}catch{}
-  const url=process.env.PAIRPOD_NOTIFY_URL;if(!url)return;
-  let detail="";
+  const fs=require("fs"),os=require("os"),path=require("path");
+  const dir=path.join(os.homedir(),".claude");
+  try{fs.mkdirSync(dir,{recursive:true})}catch(e){}
+  const spool=path.join(dir,"pairpod-events.jsonl");
+  const prMark=path.join(dir,".pairpod-has-pr");
+  const ev=j.hook_event_name;
+  let out=null;
+  if(ev==="PermissionRequest"){
+    try{fs.writeFileSync(prMark,"1")}catch(e){}
+    out={kind:"permission",tool:{name:j.tool_name||"tool",input:j.tool_input||{}}};
+  }else if(ev==="Notification"){
+    const nt=j.notification_type;
+    if(nt==="idle_prompt")out={kind:"idle"};
+    else if(nt==="permission_prompt"&&!fs.existsSync(prMark))out={kind:"permission",transcriptPath:j.transcript_path||""};
+  }
+  if(!out)return;
+  out.ts=Date.now();
+  out.pod=process.env.PAIRPOD_POD||"";
+  out.session=process.env.PAIRPOD_SESSION||"";
+  if(typeof j.message==="string")out.message=j.message;
   try{
-    const fs=require("fs");
-    const lines=fs.readFileSync(j.transcript_path,"utf8").trim().split("\\n");
-    for(let i=lines.length-1;i>=0&&i>lines.length-80;i--){
-      let m;try{m=JSON.parse(lines[i])}catch(e){continue}
-      const c=m&&m.message&&m.message.content;
-      if(!Array.isArray(c))continue;
-      const tu=c.find(b=>b&&b.type==="tool_use");
-      if(tu){
-        const ti=tu.input||{};
-        detail=tu.name||"tool";
-        if(ti.file_path)detail+=": "+ti.file_path;
-        else if(ti.command)detail+=": "+String(ti.command).slice(0,200);
-        else if(ti.path)detail+=": "+ti.path;
-        else if(ti.url)detail+=": "+ti.url;
-        else if(ti.pattern)detail+=": "+ti.pattern;
-        break;
-      }
+    fs.appendFileSync(spool,JSON.stringify(out)+"\\n");
+    if(fs.statSync(spool).size>524288){
+      const lines=fs.readFileSync(spool,"utf8").split("\\n").filter(Boolean).slice(-200);
+      fs.writeFileSync(spool,lines.join("\\n")+"\\n");
     }
   }catch(e){}
-  const body=JSON.stringify({
-    pod:process.env.PAIRPOD_POD||"",
-    session:process.env.PAIRPOD_SESSION||"",
-    token:process.env.PAIRPOD_TOKEN||"",
-    message:j.message||"",
-    detail
-  });
-  const u=new URL(url);const https=u.protocol==="https:";const lib=require(https?"https":"http");
-  const req=lib.request({hostname:u.hostname,port:u.port||(https?443:80),path:u.pathname,method:"POST",headers:{"Content-Type":"application/json","Content-Length":Buffer.byteLength(body)},timeout:5000});
-  req.on("error",()=>{});req.on("timeout",()=>req.destroy());
-  req.write(body);req.end();
 });`;
 
 const MERGE_SETTINGS_JS = `const fs=require("fs"),os=require("os"),path=require("path");
@@ -67,7 +63,9 @@ fs.mkdirSync(dir,{recursive:true});
 const f=path.join(dir,"settings.json");
 let s={};try{s=JSON.parse(fs.readFileSync(f,"utf8"))}catch(e){}
 s.hooks=s.hooks||{};
-s.hooks.Notification=[{hooks:[{type:"command",command:"node "+path.join(dir,"pairpod-notify.js")}]}];
+const cmd=[{type:"command",command:"node "+path.join(dir,"pairpod-notify.js")}];
+s.hooks.PermissionRequest=[{hooks:cmd}];
+s.hooks.Notification=[{hooks:cmd}];
 fs.writeFileSync(f,JSON.stringify(s,null,2));`;
 
 async function setupNotifyHooks(target: PodTarget): Promise<void> {
@@ -140,6 +138,21 @@ export function setSessionLabel(podId: string, sessionId: string, label: string 
   getDb()
     .prepare("UPDATE sessions SET label = ? WHERE pod_id = ? AND id = ?")
     .run(label?.trim() || null, podId, sessionId);
+}
+
+// Human-friendly names for notifications: the user-edited label when set, else the raw id.
+export function displayNames(podId: string, sessionId: string): { pod: string; session: string } {
+  const db = getDb();
+  const pod = db.prepare("SELECT label FROM pods WHERE id = ?").get(podId) as
+    | { label: string | null }
+    | undefined;
+  const session = db
+    .prepare("SELECT label FROM sessions WHERE pod_id = ? AND id = ?")
+    .get(podId, sessionId) as { label: string | null } | undefined;
+  return {
+    pod: pod?.label?.trim() || podId,
+    session: session?.label?.trim() || sessionId,
+  };
 }
 
 export function getPod(id: string): PodView | undefined {
@@ -395,16 +408,11 @@ export async function createSession(podId: string, mode: SessionMode): Promise<s
   const target = targetForPod(pod);
   const cwd = pod.kind === "ssh" ? pod.remote_cwd || "~" : "/workspace";
 
-  // Claude on a remote needs a publicly reachable bot for the permission-notify hook
-  // and claude itself installed on that host. Resolve its absolute path from a login shell
-  // so the launch doesn't depend on tmux's (non-login) PATH.
+  // Claude on a remote needs claude itself installed on that host. Resolve its absolute
+  // path from a login shell so the launch doesn't depend on tmux's (non-login) PATH.
+  // Notifications no longer need a public URL: the hook writes to a local spool the bot tails.
   let claudeBin = "claude";
   if (mode !== "terminal" && pod.kind === "ssh") {
-    if (!botConfig.publicUrl) {
-      throw new Error(
-        "set MINIAPP_URL (or PAIRPOD_PUBLIC_URL) to run Claude on SSH — needed for permission notifications"
-      );
-    }
     const probe = await target.exec(["sh", "-lc", "command -v claude"]);
     if (probe.exitCode !== 0) {
       throw new Error("claude not found on the remote host (install it and run `claude` once to log in)");
@@ -431,13 +439,7 @@ export async function createSession(podId: string, mode: SessionMode): Promise<s
   const args = ["tmux", "new-session", "-d", "-s", sid, "-c", cwd];
   if (mode !== "terminal") {
     await setupNotifyHooks(target);
-    const notifyUrl =
-      pod.kind === "ssh"
-        ? `${botConfig.publicUrl}/notify`
-        : `http://host.docker.internal:${botConfig.port}/notify`;
-    const env =
-      `PAIRPOD_POD=${podId} PAIRPOD_SESSION=${sid} ` +
-      `PAIRPOD_NOTIFY_URL=${notifyUrl} PAIRPOD_TOKEN=${botConfig.hookToken}`;
+    const env = `PAIRPOD_POD=${podId} PAIRPOD_SESSION=${sid}`;
     const claude = mode === "danger" ? `${claudeBin} --dangerously-skip-permissions` : claudeBin;
     // On SSH keep an interactive shell after claude exits so a launch failure or login prompt
     // stays visible in the pane instead of the tmux session vanishing (which shows as 4004).
