@@ -60,7 +60,7 @@ export async function attachExec(
     AttachStdout: true,
     AttachStderr: true,
     Tty: true,
-    Env: ["TERM=xterm-256color", "COLORTERM=truecolor"],
+    Env: ["TERM=xterm-256color", "COLORTERM=truecolor", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"],
   });
   const raw = await new Promise<Duplex>((resolve, reject) => {
     exec.start({ hijack: true, stdin: true }, (err: Error | null, s?: Duplex) => {

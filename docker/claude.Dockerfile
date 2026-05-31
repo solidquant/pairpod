@@ -11,5 +11,6 @@ USER agent
 WORKDIR /workspace
 
 ENV DISABLE_AUTOUPDATER=1
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 CMD ["sleep", "infinity"]
