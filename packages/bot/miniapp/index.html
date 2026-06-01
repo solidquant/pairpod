@@ -206,6 +206,20 @@
       const pod = params.get("pod") || "";
       const session = params.get("session") || "";
 
+      // Arrived via a notification's "Open" button: delete that message so the chat stays clean.
+      const dismissCid = params.get("cid"), dismissMid = params.get("mid");
+      if (dismissCid && dismissMid) {
+        fetch(location.origin + "/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cid: Number(dismissCid),
+            mid: Number(dismissMid),
+            tgData: (tg && tg.initData) || "",
+          }),
+        }).catch(function () {});
+      }
+
       const term = new window.Terminal({
         disableStdin: true,
         cursorBlink: false,

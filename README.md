@@ -120,7 +120,7 @@ Add one from `/ssh` → Add SSH endpoint, or while creating a pod. The form open
 
 Anything you paste (a key, a passphrase) is encrypted with AES-256-GCM. The master key comes from `PAIRPOD_VAULT_KEY` and only lives in memory, never on disk beside the ciphertext and never in the database. `onboard` generates it.
 
-Running Claude on an SSH host needs `claude` installed and logged in over there (open a terminal session and run it once), plus a reachable `MINIAPP_URL`/`PAIRPOD_PUBLIC_URL` so permission prompts can notify you. The first connection to a host pins its key fingerprint and verifies it every time after.
+Running Claude on an SSH host needs `claude` installed and logged in over there (open a terminal session and run it once). Permission and idle notifications work without any public URL — the bot reads them over the SSH connection it already holds. The first connection to a host pins its key fingerprint and verifies it every time after.
 
 ## Worth knowing
 
@@ -149,7 +149,6 @@ Most people never touch these directly; `onboard` writes the ones that matter. F
 | `PORT` | server port (default 40002) |
 | `HOST_MODE` | allow Host pods — unsandboxed shell on the bot machine (default `false`) |
 | `MINIAPP_URL` | public origin for the mini app; `start` fills this from the tunnel |
-| `PAIRPOD_PUBLIC_URL` | where SSH Claude sessions send notifications; defaults to `MINIAPP_URL` |
 | `PAIRPOD_VAULT_KEY` | vault master key |
 | `PAIRPOD_HOME` | where state lives (default `~/.pairpod`) |
 

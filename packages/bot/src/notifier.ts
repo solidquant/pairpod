@@ -34,20 +34,33 @@ export function recordChat(id: number): void {
   }
 }
 
-export async function pushNotification(
-  text: string,
-  pod?: string,
-  session?: string
-): Promise<void> {
+export interface NotificationLink {
+  pod: string;
+  session: string;
+  buttonLabel: string;
+}
+
+export async function pushNotification(text: string, link?: NotificationLink): Promise<void> {
   if (!bot) return;
-  let reply_markup: InlineKeyboard | undefined;
-  if (botConfig.miniappUrl && pod && session) {
-    const url = `${botConfig.miniappUrl}/?pod=${encodeURIComponent(pod)}&session=${encodeURIComponent(session)}`;
-    reply_markup = new InlineKeyboard().webApp(`▶ Open ${pod}:${session}`, url);
-  }
   for (const id of chatIds) {
     try {
-      await bot.api.sendMessage(id, text, reply_markup ? { reply_markup } : undefined);
+      const sent = await bot.api.sendMessage(id, text);
+      if (botConfig.miniappUrl && link) {
+        // cid+mid let the mini-app ask the bot to delete this very message once opened.
+        const url =
+          `${botConfig.miniappUrl}/?pod=${encodeURIComponent(link.pod)}` +
+          `&session=${encodeURIComponent(link.session)}&cid=${id}&mid=${sent.message_id}`;
+        const reply_markup = new InlineKeyboard().webApp(`▶ Open ${link.buttonLabel}`, url);
+        await bot.api.editMessageReplyMarkup(id, sent.message_id, { reply_markup });
+      }
     } catch {}
   }
+}
+
+// Delete a notification we sent, on the mini-app's request when its "Open" button is tapped.
+export async function dismissNotification(chatId: number, messageId: number): Promise<void> {
+  if (!bot || !chatIds.has(chatId)) return;
+  try {
+    await bot.api.deleteMessage(chatId, messageId);
+  } catch {}
 }

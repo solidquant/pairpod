@@ -7,6 +7,7 @@ import { botConfig } from "./config.js";
 import { getPodRow } from "./store.js";
 import { targetForPod } from "./targets/index.js";
 import { attachLocal } from "./local/sessions.js";
+import { markActive, markInactive } from "./active-sessions.js";
 
 interface AttachQuery {
   pod?: string;
@@ -54,6 +55,10 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       socket.close(4004, "session not found");
       return;
     }
+
+    // While this socket is open the user is watching the terminal; suppress its notifications.
+    markActive(podId, sessionId);
+    socket.on("close", () => markInactive(podId, sessionId));
 
     if (pod.kind === "local") {
       if (!botConfig.hostMode) {

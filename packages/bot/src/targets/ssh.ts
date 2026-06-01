@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
-import type { Duplex } from "node:stream";
+import type { Duplex, Readable } from "node:stream";
 import { Client } from "ssh2";
 import type { ConnectConfig } from "ssh2";
-import type { PodTarget, ExecResult, PtySession } from "./types.js";
+import type { PodTarget, ExecResult, ExecStream, PtySession } from "./types.js";
 import { vaultGet } from "../vault.js";
 
 export type SshAuth = "agent" | "key_path" | "vault";
@@ -108,6 +108,19 @@ export class SshTarget implements PodTarget {
           resolve({ stdout, stderr, exitCode: code ?? 0 });
         });
         stream.on("error", reject);
+      });
+    });
+  }
+
+  async execStream(cmd: string[]): Promise<ExecStream> {
+    const conn = await this.connect();
+    return new Promise<ExecStream>((resolve, reject) => {
+      conn.exec(shellJoin(cmd), (err, stream) => {
+        if (err) return reject(err);
+        resolve({
+          stream: stream as unknown as Readable,
+          close: () => { try { stream.destroy(); } catch {} },
+        });
       });
     });
   }
