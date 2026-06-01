@@ -92,6 +92,9 @@ async function handleEvent(pod: PodRow, target: PodTarget, ev: SpoolEvent): Prom
     if (ev.ts <= getLastTs(pod.id)) return;
     setLastTs(pod.id, ev.ts);
   }
+  // Standalone claude sessions (started outside pairpod) fire the shared hook but leave
+  // PAIRPOD_POD/PAIRPOD_SESSION empty — there's no pairpod session to open, so skip them.
+  if (!ev.pod || !ev.session) return;
   // The user is already watching this session in the mini-app — no need to ping them.
   if (isActive(ev.pod, ev.session)) return;
   const key = `${ev.pod}:${ev.session}`;
