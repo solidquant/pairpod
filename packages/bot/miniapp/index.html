@@ -305,6 +305,12 @@
       function connect() {
         clearTimeout(reconnectTimer);
         showOverlay(false);
+        // Tear down any prior socket first; otherwise its orphaned onclose fires a
+        // server-initiated detach back into reconnect, and overlapping attaches ping-pong forever.
+        if (ws) {
+          ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+          try { ws.close(); } catch {}
+        }
         ws = new WebSocket(wsUrl());
         ws.binaryType = "arraybuffer";
         ws.onopen = () => { reconnectAttempts = 0; doRefit(); };

@@ -37,6 +37,27 @@ export async function startServer(): Promise<void> {
   await app.register(dismissRoutes);
   await app.register(sshRoutes);
 
+  // Reap sockets whose TCP connection died silently (e.g. webview suspended on app switch)
+  // so they stop holding a stale tmux attach that fights the next viewer.
+  type WsClient = typeof app.websocketServer.clients extends Set<infer T> ? T : never;
+  const alive = new WeakSet<object>();
+  app.websocketServer.on("connection", (socket: WsClient) => {
+    alive.add(socket);
+    socket.on("pong", () => alive.add(socket));
+  });
+  const heartbeat = setInterval(() => {
+    for (const socket of app.websocketServer.clients) {
+      if (!alive.has(socket)) {
+        socket.terminate();
+        continue;
+      }
+      alive.delete(socket);
+      socket.ping();
+    }
+  }, 30000);
+  heartbeat.unref();
+  app.addHook("onClose", () => clearInterval(heartbeat));
+
   const miniappDir = path.resolve(__dirname, "../miniapp");
   await app.register(fastifyStatic, {
     root: miniappDir,
