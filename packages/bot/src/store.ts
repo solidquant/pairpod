@@ -54,7 +54,7 @@ const NODE_PROBE = [
 ].join("; ");
 
 const POD_COLS =
-  "id, container_id, kind, label, status, created_at, ssh_host, ssh_port, ssh_user, ssh_auth, " +
+  "id, container_id, kind, label, status, created_at, workspace_path, ssh_host, ssh_port, ssh_user, ssh_auth, " +
   "ssh_key_path, ssh_vault_ref, host_fingerprint, remote_cwd";
 
 // Node script (runs on the target) for Claude's hooks. It is a dumb local writer:
@@ -133,6 +133,7 @@ export interface PodRow {
   label: string | null;
   status: string;
   created_at: string;
+  workspace_path: string | null;
   ssh_host: string | null;
   ssh_port: number | null;
   ssh_user: string | null;

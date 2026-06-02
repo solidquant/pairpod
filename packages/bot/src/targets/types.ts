@@ -22,5 +22,8 @@ export interface PodTarget {
   exec(cmd: string[]): Promise<ExecResult>;
   execStream(cmd: string[]): Promise<ExecStream>;
   openPty(cmd: string[], cols: number, rows: number): Promise<PtySession>;
+  // Write bytes to an absolute path on the pod (used for image ingress over SSH). Only the
+  // SSH target needs it; Docker/Host pods reach a pod-readable path via the host filesystem.
+  putFile?(remotePath: string, data: Buffer, mode?: number): Promise<void>;
   dispose?(): Promise<void>;
 }

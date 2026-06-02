@@ -94,6 +94,17 @@
         border-radius: 6px;
       }
       #send:active { background: #b5b5b5; }
+      #attach {
+        flex: 0 0 auto;
+        padding: 8px 10px;
+        font-size: 16px;
+        color: #e5e5e5;
+        background: #2a2a2a;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+      }
+      #attach:active { background: #3a3a3a; }
+      #app.dragging #compose { outline: 2px dashed #6aa9ff; outline-offset: -2px; }
       #overlay {
         position: absolute;
         inset: 0;
@@ -152,8 +163,10 @@
       <div id="compose">
         <textarea id="input" rows="1" placeholder="Message Claude…  (Enter sends, Shift+Enter = newline)"
           autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
+        <button id="attach" title="Send image">📎</button>
         <button id="send">Send</button>
       </div>
+      <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple style="display:none" />
       <div id="keys">
         <div id="ctl">
           <button class="key" data-key="esc">Esc</button>
@@ -398,10 +411,14 @@
 
       function submitInput() {
         const text = input.value;
+        // Staged images (uploaded but not yet sent) ride along as [image: …] refs so the user
+        // can attach an image and type a message, then send both together.
+        const refs = staged.map((p) => "[image: " + p + "]").join(" ");
+        const payload = refs ? (text ? refs + " " + text : refs) : text;
         send(JSON.stringify({ type: "cancelcopy" }));
         // Don't clear the box until the text is actually on the wire — otherwise a closed
         // socket silently eats the prompt.
-        if (text.length === 0) {
+        if (payload.length === 0) {
           send("\r");
           term.scrollToBottom();
           return;
@@ -409,12 +426,14 @@
         // Text + submitting Enter go in one frame; a deferred Enter gets dropped when the
         // mobile webview blurs on keyboard dismiss. Bracketed paste keeps newlines literal.
         const sent = bracketOn
-          ? send("\x1b[200~" + text + "\x1b[201~")
-          : send(text);
+          ? send("\x1b[200~" + payload + "\x1b[201~")
+          : send(payload);
         if (!sent) {
-          toast("Not connected — text kept, reconnecting…");
+          toast("Not connected — kept, reconnecting…");
           return;
         }
+        staged = [];
+        updateStaged();
         input.value = "";
         autoGrow();
         input.focus();
@@ -427,7 +446,7 @@
             autoGrow();
             toast("Reconnected — tap Send to submit");
           }
-        }, Math.min(120 + Math.floor(text.length / 25), 1500));
+        }, Math.min(120 + Math.floor(payload.length / 25), 1500));
       }
 
       function insertNewline() {
@@ -470,6 +489,98 @@
       document.getElementById("nl").addEventListener("click", (e) => {
         e.preventDefault();
         insertNewline();
+      });
+
+      // Image upload: POST raw bytes to /upload; the server places the file on the pod and
+      // returns its path. We *stage* the path (not send) so the user can attach an image and
+      // then type a message — both go out together on the next Send as "[image: <path>] text".
+      const fileInput = document.getElementById("file");
+      const attachBtn = document.getElementById("attach");
+      const composePlaceholder = "Message Claude…  ·  Enter to send";
+      let staged = [];
+
+      function updateStaged() {
+        const n = staged.length;
+        attachBtn.textContent = n ? "📎" + n : "📎";
+        input.placeholder = n
+          ? n + (n > 1 ? " images" : " image") + " attached — add a message, then Send"
+          : composePlaceholder;
+      }
+
+      async function uploadImage(file) {
+        if (!file || !/^image\//.test(file.type)) {
+          toast("Only PNG/JPG/WebP/GIF images");
+          return;
+        }
+        if (file.size > 20 * 1024 * 1024) {
+          toast("Image over 20MB");
+          return;
+        }
+        const tgData = (tg && tg.initData) || "";
+        const url =
+          location.origin + "/upload?pod=" + encodeURIComponent(pod) +
+          "&session=" + encodeURIComponent(session) +
+          "&tgData=" + encodeURIComponent(tgData);
+        toast("Uploading image…");
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": file.type || "application/octet-stream" },
+            body: file,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.path) {
+            toast(data.error || "Upload failed");
+            return;
+          }
+          staged.push(data.path);
+          updateStaged();
+          input.focus();
+          toast("Image attached — add a message, then Send");
+        } catch (_e) {
+          toast("Upload failed");
+        }
+      }
+
+      // Stage several images at once (multi-select / multi-paste / multi-drop), uploaded in
+      // order so the [image: …] refs keep their selection order on the next Send.
+      async function uploadFiles(list) {
+        const imgs = Array.from(list || []).filter((f) => f && /^image\//.test(f.type));
+        if (!imgs.length) {
+          toast("Only PNG/JPG/WebP/GIF images");
+          return;
+        }
+        for (const f of imgs) await uploadImage(f);
+      }
+
+      attachBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", () => {
+        uploadFiles(fileInput.files);
+        fileInput.value = "";
+      });
+      input.addEventListener("paste", (e) => {
+        const items = (e.clipboardData && e.clipboardData.items) || [];
+        const files = [];
+        for (const it of items) {
+          if (it.kind === "file" && /^image\//.test(it.type)) files.push(it.getAsFile());
+        }
+        if (files.length) {
+          e.preventDefault();
+          uploadFiles(files);
+        }
+      });
+      const appEl = document.getElementById("app");
+      ["dragenter", "dragover"].forEach((ev) =>
+        appEl.addEventListener(ev, (e) => { e.preventDefault(); appEl.classList.add("dragging"); })
+      );
+      ["dragleave", "drop"].forEach((ev) =>
+        appEl.addEventListener(ev, (e) => { e.preventDefault(); appEl.classList.remove("dragging"); })
+      );
+      appEl.addEventListener("drop", (e) => {
+        if (e.dataTransfer) uploadFiles(e.dataTransfer.files);
       });
 
       // Sniff the output stream for private-mode toggles (CSI ? <n> h/l). mouseOn drives

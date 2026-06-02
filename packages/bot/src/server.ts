@@ -11,10 +11,12 @@ import { errorHandler } from "./errors.js";
 import { attachRoutes } from "./attach.js";
 import { dismissRoutes } from "./dismiss.js";
 import { sshRoutes } from "./ssh.js";
+import { uploadRoutes } from "./upload.js";
 import { pruneLocalSessions } from "./store.js";
 import { startBot } from "./bot.js";
 import { startNotifyTailers } from "./notify-tailer.js";
 import { startTranscriptTailers } from "./transcript-tailer.js";
+import { startMediaSweeper } from "./media-transport.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +39,7 @@ export async function startServer(): Promise<void> {
   await app.register(attachRoutes);
   await app.register(dismissRoutes);
   await app.register(sshRoutes);
+  await app.register(uploadRoutes);
 
   // Reap sockets whose TCP connection died silently (e.g. webview suspended on app switch)
   // so they stop holding a stale tmux attach that fights the next viewer.
@@ -80,4 +83,5 @@ export async function startServer(): Promise<void> {
   startBot();
   startNotifyTailers();
   startTranscriptTailers();
+  startMediaSweeper();
 }

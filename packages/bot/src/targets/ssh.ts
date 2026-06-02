@@ -144,6 +144,19 @@ export class SshTarget implements PodTarget {
     });
   }
 
+  async putFile(remotePath: string, data: Buffer, mode = 0o644): Promise<void> {
+    const conn = await this.connect();
+    await new Promise<void>((resolve, reject) => {
+      conn.sftp((err, sftp) => {
+        if (err) return reject(err);
+        const ws = sftp.createWriteStream(remotePath, { mode });
+        ws.on("close", () => resolve());
+        ws.on("error", reject);
+        ws.end(data);
+      });
+    });
+  }
+
   async dispose(): Promise<void> {
     if (this.client) {
       this.client.end();
