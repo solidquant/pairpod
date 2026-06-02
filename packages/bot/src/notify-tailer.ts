@@ -6,6 +6,8 @@ import { parseSpoolLine, findPendingToolUse, describeTool, type SpoolEvent } fro
 import { consume } from "./spool-stream.js";
 import { pushNotification } from "./notifier.js";
 import { isActive } from "./active-sessions.js";
+import { setTranscriptPath, getChatSession } from "./chat-store.js";
+import { kickTranscriptTailers } from "./transcript-tailer.js";
 
 const SPOOL = '"$HOME/.claude/pairpod-events.jsonl"';
 const PIDFILE = '"$HOME/.claude/.pairpod-tail.pid"';
@@ -86,6 +88,16 @@ async function runTailer(pod: PodRow, t: Tailer): Promise<void> {
 }
 
 async function handleEvent(pod: PodRow, target: PodTarget, ev: SpoolEvent): Promise<void> {
+  // SessionStart carries the transcript path; record it so the transcript tailer knows which
+  // file to follow for a chat-bridged session. Idempotent, so it bypasses the ts watermark.
+  if (ev.kind === "start") {
+    if (ev.pod && ev.session && ev.transcriptPath) {
+      setTranscriptPath(ev.pod, ev.session, ev.transcriptPath);
+      // Only chat sessions are tailed; kick a reconcile so the first reply isn't tick-delayed.
+      if (getChatSession(ev.pod, ev.session)) kickTranscriptTailers();
+    }
+    return;
+  }
   // Authoritative dedup: ev.ts is the remote's monotonic clock at hook time. Persisting
   // the high-water mark makes redelivery (reconnect, restart, spool rotation) a no-op.
   if (typeof ev.ts === "number") {
@@ -100,6 +112,8 @@ async function handleEvent(pod: PodRow, target: PodTarget, ev: SpoolEvent): Prom
   const link = { pod: ev.pod, session: ev.session, buttonLabel: where };
 
   if (ev.kind === "idle") {
+    // Chat-bridged sessions are meant to idle until the next Telegram message — don't ping.
+    if (getChatSession(ev.pod, ev.session)) return;
     const now = Date.now();
     if (now - (lastIdle.get(key) ?? 0) < IDLE_COLLAPSE_MS) return;
     lastIdle.set(key, now);

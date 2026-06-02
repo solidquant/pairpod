@@ -15,12 +15,23 @@ import {
   testPod,
   setPodLabel,
   setSessionLabel,
+  sendToSession,
   type SessionMode,
   type PodView,
 } from "./store.js";
+import {
+  resolveHandle,
+  getChatSession,
+  listChatSessions,
+  setFocus,
+  getFocus,
+  normalizeHandle,
+} from "./chat-store.js";
 
 // chat id -> a pending rename target; the user's next text message becomes the name.
 const pendingRename = new Map<number, { podId: string; sessionId?: string }>();
+// chat id -> a pod awaiting a handle; the user's next text message names a new chat session.
+const pendingNewChat = new Map<number, { podId: string }>();
 
 // When the allowlist holds a username but not yet a numeric id, the first private
 // message from that handle pins its id into the allowlist (ids can't be reassigned).
@@ -63,6 +74,13 @@ function podLabel(p: PodView): string {
 
 function sessName(s: { id: string; label: string | null }): string {
   return s.label || s.id;
+}
+
+function handleHint(chatId: number): string {
+  const handles = listChatSessions(chatId).map((c) => `@${c.handle}`);
+  return handles.length
+    ? `Unknown handle. Address one of: ${handles.join(", ")}`
+    : "No chat sessions yet. Open a pod in /pods and tap 💬 New (Telegram chat).";
 }
 
 function podsView(): { text: string; keyboard: InlineKeyboard } {
@@ -111,12 +129,14 @@ function podView(podId: string): { text: string; keyboard: InlineKeyboard } {
   const hostDisabled = pod.kind === "local" && !botConfig.hostMode;
 
   for (const s of pod.sessions) {
+    const cs = getChatSession(podId, s.id);
+    const name = cs ? `💬 @${cs.handle}` : sessName(s);
     if (hostDisabled) {
-      kb.text(`▶ ${sessName(s)} (host mode off)`, "pp:hostoff");
+      kb.text(`▶ ${name} (host mode off)`, "pp:hostoff");
     } else {
       const link = miniappLink(podId, s.id);
-      if (link) kb.webApp(`▶ ${sessName(s)}`, link);
-      else kb.text(`▶ ${sessName(s)} (set MINIAPP_URL)`, "pp:noapp");
+      if (link) kb.webApp(`▶ ${name}`, link);
+      else kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
     }
     kb.text("✏️", `pp:renamesess:${podId}:${s.id}`)
       .text("× kill", `pp:delsess:${podId}:${s.id}`)
@@ -127,6 +147,7 @@ function podView(podId: string): { text: string; keyboard: InlineKeyboard } {
     kb.text("⚡ New (skip-perms)", `pp:newsess:${podId}:danger`)
       .text("🔒 New (regular)", `pp:newsess:${podId}:regular`)
       .row();
+    kb.text("💬 New (Telegram chat)", `pp:newchat:${podId}`).row();
   }
   if (!hostDisabled) kb.text("🖥 New Terminal (shell)", `pp:newsess:${podId}:terminal`).row();
   kb.text("‹ Pods", "pp:pods")
@@ -198,10 +219,12 @@ export function startBot(): void {
     await next();
   });
 
-  // Any button press other than a rename abandons a half-started rename.
+  // Any unrelated button press abandons a half-started rename or new-chat prompt.
   bot.on("callback_query:data", async (ctx, next) => {
-    if (!ctx.callbackQuery.data.startsWith("pp:rename") && ctx.chat) {
-      pendingRename.delete(ctx.chat.id);
+    const d = ctx.callbackQuery.data;
+    if (ctx.chat) {
+      if (!d.startsWith("pp:rename")) pendingRename.delete(ctx.chat.id);
+      if (!d.startsWith("pp:newchat")) pendingNewChat.delete(ctx.chat.id);
     }
     await next();
   });
@@ -225,13 +248,15 @@ export function startBot(): void {
           ? "New pod backends: 🐳 Docker (a fresh container), 🔌 SSH (a remote host), or 💻 Host (a shell on the bot machine)."
           : "New pod backends: 🐳 Docker (a fresh container) or 🔌 SSH (a remote host).",
         "",
-        "Sessions come in three modes (Docker and SSH):",
+        "Sessions come in four modes (Docker and SSH):",
         "⚡ skip-perms — claude --dangerously-skip-permissions",
         "🔒 regular — claude (answer permission prompts in the terminal)",
         "🖥 terminal — a plain shell",
+        "💬 chat — talk to claude right here in Telegram; you name it and address it as @handle",
         "SSH Claude sessions need claude installed + logged in on the remote, and MINIAPP_URL set.",
         "",
         "▶ opens a byte-identical terminal (xterm) as a Telegram mini app.",
+        "For a 💬 chat session, just message @handle (e.g. \"@sess1 how are things?\") — replies come back here.",
       ].join("\n")
     );
   });
@@ -390,6 +415,21 @@ export function startBot(): void {
     await ctx.editMessageText(v.text, { reply_markup: v.keyboard });
   });
 
+  bot.callbackQuery(/^pp:newchat:(.+)$/, async (ctx) => {
+    const podId = ctx.match[1];
+    const pod = getPod(podId);
+    if (!pod || pod.kind === "local") {
+      await ctx.answerCallbackQuery({ text: "Chat sessions need a Docker or SSH pod.", show_alert: true });
+      return;
+    }
+    if (ctx.chat) pendingNewChat.set(ctx.chat.id, { podId });
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `Send a handle for the new chat session on ${pod.label || podId} — you'll address it as @handle from this chat. Letters, digits, dash or underscore.`,
+      { reply_markup: { force_reply: true, input_field_placeholder: "e.g. sess1" } }
+    );
+  });
+
   bot.callbackQuery(/^pp:delsess:(.+):(.+)$/, async (ctx) => {
     const podId = ctx.match[1];
     const sessionId = ctx.match[2];
@@ -404,22 +444,76 @@ export function startBot(): void {
     await ctx.editMessageText(v.text, { reply_markup: v.keyboard });
   });
 
-  // Capture the next text message as the name for a pending rename.
   bot.on("message:text", async (ctx) => {
-    const pending = pendingRename.get(ctx.chat.id);
-    if (!pending) return;
-    pendingRename.delete(ctx.chat.id);
-    const text = ctx.message.text.trim();
-    const label = text === "-" ? null : text;
-    try {
-      if (pending.sessionId) setSessionLabel(pending.podId, pending.sessionId, label);
-      else setPodLabel(pending.podId, label);
-    } catch (e) {
-      await ctx.reply(`Rename failed: ${(e as Error).message}`);
+    const chatId = ctx.chat.id;
+
+    // 1. Capturing a name for a pending rename.
+    const pending = pendingRename.get(chatId);
+    if (pending) {
+      pendingRename.delete(chatId);
+      const text = ctx.message.text.trim();
+      const label = text === "-" ? null : text;
+      try {
+        if (pending.sessionId) setSessionLabel(pending.podId, pending.sessionId, label);
+        else setPodLabel(pending.podId, label);
+      } catch (e) {
+        await ctx.reply(`Rename failed: ${(e as Error).message}`);
+        return;
+      }
+      const v = podView(pending.podId);
+      await ctx.reply(v.text, { reply_markup: v.keyboard });
       return;
     }
-    const v = podView(pending.podId);
-    await ctx.reply(v.text, { reply_markup: v.keyboard });
+
+    // 2. Capturing a handle for a new chat session.
+    const newChat = pendingNewChat.get(chatId);
+    if (newChat) {
+      pendingNewChat.delete(chatId);
+      const handle = ctx.message.text.trim();
+      try {
+        await createSession(newChat.podId, "chat", { handle, chatId });
+      } catch (e) {
+        await ctx.reply(`Couldn't create chat session: ${(e as Error).message}`);
+        return;
+      }
+      const h = normalizeHandle(handle);
+      await ctx.reply(`💬 chat session @${h} is up and in focus. Just type to talk to it, or address another with @handle.`);
+      return;
+    }
+
+    // 3. Routing a message to a chat-bridged session.
+    const raw = ctx.message.text;
+    const mention = raw.match(/^@([a-z0-9][a-z0-9_-]{0,31})\s*([\s\S]*)$/i);
+    if (mention) {
+      const target = resolveHandle(mention[1]);
+      if (!target) {
+        await ctx.reply(handleHint(chatId));
+        return;
+      }
+      setFocus(chatId, target.podId, target.sessionId);
+      const body = mention[2].trim();
+      if (!body) {
+        await ctx.reply(`▶ now talking to @${target.handle}`);
+        return;
+      }
+      try {
+        await sendToSession(target.podId, target.sessionId, body);
+      } catch (e) {
+        await ctx.reply(`Couldn't reach @${target.handle}: ${(e as Error).message}`);
+      }
+      return;
+    }
+
+    const focus = getFocus(chatId);
+    if (!focus) {
+      if (listChatSessions(chatId).length) await ctx.reply(handleHint(chatId));
+      return;
+    }
+    try {
+      await sendToSession(focus.podId, focus.sessionId, raw);
+    } catch (e) {
+      await ctx.reply(`Couldn't reach the session: ${(e as Error).message}`);
+    }
   });
 
   bot.catch((err) => console.error("bot error", err));
