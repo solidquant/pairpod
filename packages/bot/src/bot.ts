@@ -16,6 +16,7 @@ import {
   setPodLabel,
   setSessionLabel,
   sendToSession,
+  getPodRow,
   type SessionMode,
   type PodView,
 } from "./store.js";
@@ -27,6 +28,8 @@ import {
   getFocus,
   normalizeHandle,
 } from "./chat-store.js";
+import { ingestImage } from "./media-ingest.js";
+import { writeToPod } from "./media-transport.js";
 
 // chat id -> a pending rename target; the user's next text message becomes the name.
 const pendingRename = new Map<number, { podId: string; sessionId?: string }>();
@@ -81,6 +84,130 @@ function handleHint(chatId: number): string {
   return handles.length
     ? `Unknown handle. Address one of: ${handles.join(", ")}`
     : "No chat sessions yet. Open a pod in /pods and tap 💬 New (Telegram chat).";
+}
+
+type Routed =
+  | { kind: "ok"; podId: string; sessionId: string; handle: string; body: string }
+  | { kind: "hint"; message: string }
+  | { kind: "none" };
+
+// Resolve which chat session a message targets: a leading @handle (which also becomes the
+// sticky focus), else the focused session. Shared by text and image handlers.
+function resolveTarget(chatId: number, text: string): Routed {
+  const mention = text.match(/^@([a-z0-9][a-z0-9_-]{0,31})\s*([\s\S]*)$/i);
+  if (mention) {
+    const t = resolveHandle(mention[1]);
+    if (!t) return { kind: "hint", message: handleHint(chatId) };
+    setFocus(chatId, t.podId, t.sessionId);
+    return { kind: "ok", podId: t.podId, sessionId: t.sessionId, handle: t.handle, body: mention[2].trim() };
+  }
+  const focus = getFocus(chatId);
+  if (focus) {
+    const cs = getChatSession(focus.podId, focus.sessionId);
+    return { kind: "ok", podId: focus.podId, sessionId: focus.sessionId, handle: cs?.handle ?? "", body: text };
+  }
+  return listChatSessions(chatId).length ? { kind: "hint", message: handleHint(chatId) } : { kind: "none" };
+}
+
+interface PendingGroup {
+  podId: string;
+  sessionId: string;
+  handle: string;
+  caption: string;
+  paths: string[];
+  timer: ReturnType<typeof setTimeout>;
+}
+// Telegram albums arrive as separate updates sharing a media_group_id; buffer briefly so all
+// the images land in one PTY turn instead of one prompt per photo.
+const mediaGroups = new Map<string, PendingGroup>();
+
+function fileUrl(filePath: string): string {
+  return `https://api.telegram.org/file/bot${botConfig.token}/${filePath}`;
+}
+
+function ingestReply(reason: "too_large" | "bad_type" | "fetch_failed"): string {
+  if (reason === "too_large") return "That image is over 20MB (Telegram's cap) — send a smaller one.";
+  if (reason === "bad_type") return "Only PNG / JPG / WebP / GIF images for now.";
+  return "Couldn't fetch that image — try again.";
+}
+
+// [image: /path] refs that Claude reads as real bytes, with the caption (newlines flattened so
+// the PTY line isn't split) trailing.
+function imageRefs(podPaths: string[], caption: string): string {
+  const refs = podPaths.map((p) => `[image: ${p}]`).join(" ");
+  const cap = caption.replace(/\s*\n\s*/g, " ").trim();
+  return cap ? `${refs} ${cap}` : refs;
+}
+
+async function flushGroup(key: string): Promise<void> {
+  const g = mediaGroups.get(key);
+  if (!g) return;
+  mediaGroups.delete(key);
+  if (!g.paths.length) return;
+  try {
+    await sendToSession(g.podId, g.sessionId, imageRefs(g.paths, g.caption));
+  } catch (e) {
+    console.error("media group flush failed", e);
+  }
+}
+
+async function handleIncomingImage(
+  ctx: Context,
+  fileId: string,
+  caption: string | undefined,
+  mediaGroupId: string | undefined
+): Promise<void> {
+  const chatId = ctx.chat!.id;
+  const key = mediaGroupId ? `${chatId}:${mediaGroupId}` : "";
+  const existing = key ? mediaGroups.get(key) : undefined;
+
+  let podId: string, sessionId: string, handle: string, body: string;
+  if (existing) {
+    ({ podId, sessionId, handle } = existing);
+    body = "";
+  } else {
+    const r = resolveTarget(chatId, caption ?? "");
+    if (r.kind === "hint") return void ctx.reply(r.message);
+    if (r.kind === "none") return void ctx.reply("No session in focus — caption it with @handle to pick one.");
+    ({ podId, sessionId, handle, body } = r);
+  }
+
+  const pod = getPodRow(podId);
+  if (!pod) return;
+
+  let filePath: string | undefined;
+  try {
+    filePath = (await ctx.api.getFile(fileId)).file_path;
+  } catch {}
+  if (!filePath) return void ctx.reply(ingestReply("fetch_failed"));
+
+  const result = await ingestImage(fileUrl(filePath));
+  if (!result.ok) return void ctx.reply(ingestReply(result.reason));
+
+  let podPath: string;
+  try {
+    podPath = await writeToPod(pod, sessionId, result.name, result.data);
+  } catch (e) {
+    return void ctx.reply(`Couldn't place the image on the pod: ${(e as Error).message}`);
+  }
+
+  if (key) {
+    let g = mediaGroups.get(key);
+    if (!g) {
+      g = { podId, sessionId, handle, caption: body, paths: [], timer: setTimeout(() => flushGroup(key), 1200) };
+      mediaGroups.set(key, g);
+    } else if (body && !g.caption) {
+      g.caption = body;
+    }
+    g.paths.push(podPath);
+    return;
+  }
+
+  try {
+    await sendToSession(podId, sessionId, imageRefs([podPath], body));
+  } catch (e) {
+    await ctx.reply(`Couldn't reach @${handle}: ${(e as Error).message}`);
+  }
 }
 
 function podsView(): { text: string; keyboard: InlineKeyboard } {
@@ -482,39 +609,42 @@ export function startBot(): void {
     }
 
     // 3. Routing a message to a chat-bridged session.
-    const raw = ctx.message.text;
-    const mention = raw.match(/^@([a-z0-9][a-z0-9_-]{0,31})\s*([\s\S]*)$/i);
-    if (mention) {
-      const target = resolveHandle(mention[1]);
-      if (!target) {
-        await ctx.reply(handleHint(chatId));
-        return;
-      }
-      setFocus(chatId, target.podId, target.sessionId);
-      const body = mention[2].trim();
-      if (!body) {
-        await ctx.reply(`▶ now talking to @${target.handle}`);
-        return;
-      }
-      try {
-        await sendToSession(target.podId, target.sessionId, body);
-      } catch (e) {
-        await ctx.reply(`Couldn't reach @${target.handle}: ${(e as Error).message}`);
-      }
+    const r = resolveTarget(chatId, ctx.message.text);
+    if (r.kind === "hint") {
+      await ctx.reply(r.message);
       return;
     }
-
-    const focus = getFocus(chatId);
-    if (!focus) {
-      if (listChatSessions(chatId).length) await ctx.reply(handleHint(chatId));
+    if (r.kind === "none") return;
+    if (!r.body) {
+      await ctx.reply(`▶ now talking to @${r.handle}`);
       return;
     }
     try {
-      await sendToSession(focus.podId, focus.sessionId, raw);
+      await sendToSession(r.podId, r.sessionId, r.body);
     } catch (e) {
-      await ctx.reply(`Couldn't reach the session: ${(e as Error).message}`);
+      await ctx.reply(`Couldn't reach @${r.handle}: ${(e as Error).message}`);
     }
   });
+
+  bot.on("message:photo", async (ctx) => {
+    const photo = ctx.message.photo[ctx.message.photo.length - 1]; // largest size
+    await handleIncomingImage(ctx, photo.file_id, ctx.message.caption, ctx.message.media_group_id);
+  });
+
+  bot.on("message:document", async (ctx) => {
+    const doc = ctx.message.document;
+    if (!doc.mime_type?.startsWith("image/")) {
+      await ctx.reply("Only PNG / JPG / WebP / GIF images for now.");
+      return;
+    }
+    await handleIncomingImage(ctx, doc.file_id, ctx.message.caption, ctx.message.media_group_id);
+  });
+
+  for (const kind of ["video", "audio", "voice", "sticker", "video_note", "animation"] as const) {
+    bot.on(`message:${kind}`, async (ctx) => {
+      await ctx.reply("Only images are supported for now (PNG / JPG / WebP / GIF).");
+    });
+  }
 
   bot.catch((err) => console.error("bot error", err));
 

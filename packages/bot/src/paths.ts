@@ -13,6 +13,7 @@ export const paths = {
   db: path.join(PAIRPOD_HOME, "pairpod.db"),
   workspaces: path.join(PAIRPOD_HOME, "workspaces"),
   vault: path.join(PAIRPOD_HOME, "vault"),
+  media: path.join(PAIRPOD_HOME, "state", "media"),
 };
 
 export function ensureHome(): void {
