@@ -89,4 +89,37 @@ function migrate(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
   `);
+
+  // Telegram chat-bridged sessions: which chat a chat-mode session talks to, plus its
+  // unique @handle (the only addressable name). chat_focus is the session a chat is
+  // currently addressing (sticky after the last @mention). transcript_cursor resumes the
+  // per-session transcript tail; last_uuid is the dedup watermark across compaction/rotation.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_chat (
+      pod_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      chat_id INTEGER NOT NULL,
+      handle TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (pod_id, session_id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS session_chat_handle ON session_chat (handle COLLATE NOCASE);
+
+    CREATE TABLE IF NOT EXISTS chat_focus (
+      chat_id INTEGER PRIMARY KEY,
+      pod_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS transcript_cursor (
+      pod_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      transcript_path TEXT,
+      byte_offset INTEGER NOT NULL DEFAULT 0,
+      last_uuid TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (pod_id, session_id)
+    );
+  `);
 }

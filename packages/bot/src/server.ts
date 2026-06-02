@@ -14,6 +14,7 @@ import { sshRoutes } from "./ssh.js";
 import { pruneLocalSessions } from "./store.js";
 import { startBot } from "./bot.js";
 import { startNotifyTailers } from "./notify-tailer.js";
+import { startTranscriptTailers } from "./transcript-tailer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,4 +79,5 @@ export async function startServer(): Promise<void> {
   await app.listen({ port: botConfig.port, host: "0.0.0.0" });
   startBot();
   startNotifyTailers();
+  startTranscriptTailers();
 }
