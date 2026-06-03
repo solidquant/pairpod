@@ -22,15 +22,16 @@ Pods come in three kinds:
 | 🔌 SSH | a remote machine reached over SSH |
 | 💻 Host | a shell on the bot machine itself — **off by default** (see [Host mode](#host-mode)) |
 
-Sessions come in three modes:
+Sessions come in four modes:
 
 | Mode | Runs |
 |---|---|
 | terminal | a plain shell |
-| regular | `claude` — you answer the permission prompts |
+| regular | `claude` — you answer the permission prompts in the terminal |
 | skip-perms | `claude --dangerously-skip-permissions` |
+| chat | talk to Claude over Telegram — you name it, address it as `@handle`, and replies come back in the chat |
 
-Docker and SSH pods run all three modes; Host pods are terminal-only. You can name pods and sessions, which keeps a list of `pod-7` / `claude-3` readable once you have a few.
+Docker and SSH pods run all four modes; Host pods are terminal-only. You can name pods and sessions, which keeps a list of `pod-7` / `claude-3` readable once you have a few.
 
 ## Quick start
 
@@ -91,10 +92,11 @@ It's a pnpm workspace. `packages/bot` is the whole app: the server, the bot, the
 
 In Telegram:
 
-- `/pods` — your pods; create, rename, delete, open sessions
+- `/menu` — a tap-to-navigate panel; pin it in a group for quick access
+- `/pods` — your pods; create, rename, delete, open sessions, grant access
 - `/sessions` — every session with an open button
 - `/ssh` — add, test, edit, or remove SSH hosts
-- `/whoami` — your id and username, for locking down the allowlist
+- `/whoami` — your id, username, and role
 
 On the command line, with the `pairpod` CLI:
 
@@ -107,6 +109,21 @@ From a clone of the repo, run these through pnpm (`pnpm onboard`, `pnpm start`),
 
 - `pnpm dev` — hot-reload the bot, no tunnel (for development)
 - `pnpm build` — compile both packages to `dist/`
+
+## Sharing & roles
+
+Use pairpod solo in a 1:1 chat, or with a team: add the bot to a Telegram group and invite people there. Access is granted **per pod**.
+
+| Role | Can do |
+|---|---|
+| owner | everything — create/delete pods, kill sessions, grant access |
+| writer-full | drive a pod's terminals and chat-sessions |
+| writer-chat | chat with its chat-sessions over Telegram only; the terminal is read-only |
+| reader | read-only terminal; can't send |
+
+Owners are your allowlist (`TELEGRAM_ALLOWED_USER_IDS` / `..._USERNAMES`) and keep a private chat with the bot. Everyone else is a guest with no access until an owner grants it from a pod's **👥 Access** view — `➕ Add @user writer-chat`, or tap a name to cycle its role. A grant by `@handle` applies the moment that person first messages the bot. Host pods can't be shared. Guests only interact in the group; the bot ignores private messages from non-owners. Deleting a pod or killing a session is owner-only and asks for confirmation.
+
+**Opening terminals from a group.** Telegram only allows the mini app's launch button in private chats, so to open terminals from a group you register a Mini App once in [@BotFather](https://t.me/BotFather) and set either `MINIAPP_APP_SHORT_NAME` (from `/newapp`) or `MINIAPP_MAIN=true` (Bot Settings → Configure Mini App). The Mini App's URL must equal `MINIAPP_URL`, so this wants a **stable** tunnel or domain — a rotating quick tunnel means re-pointing it after each restart. Several people can stream the same session at once.
 
 ## SSH hosts
 
@@ -126,7 +143,7 @@ Running Claude on an SSH host needs `claude` installed and logged in over there 
 
 A cloudflared quick tunnel terminates TLS at Cloudflare's edge, so a pasted key or passphrase is briefly in the clear there. If that bothers you, use ssh-agent (nothing leaves the host) or a fixed named tunnel.
 
-The bot only answers people on your allowlist, and the mini app checks Telegram's signed `initData` on every connection — knowing the tunnel URL isn't enough to get in. Set the allowlist: the first private message from an allowed `@handle` pins its numeric id into `~/.pairpod/.env` automatically, so you end up locked to a stable id (handles can be reassigned) without looking it up.
+The bot only answers owners (your allowlist) and the guests they've granted per-pod access (see [Sharing & roles](#sharing--roles)); the mini app checks Telegram's signed `initData` on every connection and re-checks the user's role each time — knowing the tunnel URL isn't enough to get in. The first private message from an allowed owner `@handle` pins its numeric id into `~/.pairpod/.env` automatically, so you end up locked to a stable id (handles can be reassigned) without looking it up.
 
 ### Host mode
 
@@ -145,10 +162,11 @@ Most people never touch these directly; `onboard` writes the ones that matter. F
 | Key | What it does |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | the bot token |
-| `TELEGRAM_ALLOWED_USERNAMES` / `..._USER_IDS` | who's allowed in (empty means anyone); an allowed handle's id is pinned to `..._USER_IDS` on first message |
+| `TELEGRAM_ALLOWED_USERNAMES` / `..._USER_IDS` | the **owners** (empty means anyone); an allowed handle's id is pinned to `..._USER_IDS` on first message. Guests are granted per pod (see [Sharing & roles](#sharing--roles)) |
 | `PORT` | server port (default 40002) |
 | `HOST_MODE` | allow Host pods — unsandboxed shell on the bot machine (default `false`) |
 | `MINIAPP_URL` | public origin for the mini app; `start` fills this from the tunnel |
+| `MINIAPP_APP_SHORT_NAME` / `MINIAPP_MAIN` | open terminals from group chats via a direct-link Mini App (see [Sharing & roles](#sharing--roles)) |
 | `PAIRPOD_VAULT_KEY` | vault master key |
 | `PAIRPOD_HOME` | where state lives (default `~/.pairpod`) |
 

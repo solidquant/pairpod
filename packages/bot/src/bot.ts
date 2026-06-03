@@ -3,7 +3,7 @@ import { run } from "@grammyjs/runner";
 import { botConfig } from "./config.js";
 import { updateEnv } from "./env.js";
 import { isAllowed, isOwner, effectiveRole, openMode } from "./access.js";
-import { canWrite, isGrantRole } from "./roles.js";
+import { canWrite, canChat, normalizeGrantRole, nextGrantRole } from "./roles.js";
 import { promoteInvitee, grant, revokeAccess, revokePending, listAccess } from "./users.js";
 import { setNotifierBot, recordChat } from "./notifier.js";
 import {
@@ -216,7 +216,7 @@ async function handleIncomingImage(
     ({ podId, sessionId, handle, body } = r);
   }
 
-  if (!canWrite(effectiveRole(ctx.from?.id, ctx.from?.username, podId))) {
+  if (!canChat(effectiveRole(ctx.from?.id, ctx.from?.username, podId))) {
     return void ctx.reply("You have read-only access here — you can watch this session but not send to it.");
   }
   setReplyChat(podId, sessionId, chatId);
@@ -414,9 +414,9 @@ function accessView(podId: string): { text: string; keyboard: InlineKeyboard } {
   }
   for (const e of listAccess(podId)) {
     const who = e.username ? `@${e.username}` : `id ${e.userId}`;
-    const next = e.role === "writer" ? "reader" : "writer";
+    const next = nextGrantRole(e.role);
     const target = e.pending ? e.username ?? "" : String(e.userId);
-    kb.text(`${who}: ${e.role}${e.pending ? " (pending)" : ""} → make ${next}`, `pp:rt:${podId}:${next}:${target}`);
+    kb.text(`${who}: ${e.role}${e.pending ? " (pending)" : ""} → ${next}`, `pp:rt:${podId}:${next}:${target}`);
     if (e.pending) kb.text("× remove", `pp:revpend:${podId}:${e.username}`);
     else kb.text("× remove", `pp:revuser:${podId}:${e.userId}`);
     kb.row();
@@ -425,7 +425,13 @@ function accessView(podId: string): { text: string; keyboard: InlineKeyboard } {
   kb.text("‹ Back", `pp:pod:${podId}`);
   const label = pod.label || podId;
   return {
-    text: `Access for "${label}" — you (owner) always have full access.\nTap a name to flip writer ⇄ reader; × removes access. ➕ Add grants a new user.`,
+    text:
+      `👥 Access · ${label}\n\n` +
+      "You (owner) have full access. Grant others per pod:\n\n" +
+      "🛠 writer-full — drives the terminal\n" +
+      "💬 writer-chat — Telegram chat only, read-only terminal\n" +
+      "👁 reader — read-only\n\n" +
+      "Tap a name to change its role  ·  × remove  ·  ➕ add",
     keyboard: kb,
   };
 }
@@ -697,15 +703,16 @@ export function startBot(): void {
     const podId = ctx.match[1];
     if (ctx.chat) pendingGrant.set(ctx.chat.id, { podId });
     await ctx.answerCallbackQuery();
-    await ctx.reply(`Send "@username writer" or "@username reader" (or a numeric id) to grant access to ${podId}.`, {
-      reply_markup: { force_reply: true, input_field_placeholder: "@user writer" },
-    });
+    await ctx.reply(
+      `Send "@user writer-full" (terminal), "@user writer-chat" (TG chat only), or "@user reader" (a numeric id works too) to grant access to ${podId}.`,
+      { reply_markup: { force_reply: true, input_field_placeholder: "@user writer-chat" } }
+    );
   });
 
-  bot.callbackQuery(/^pp:rt:([^:]+):(writer|reader):(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^pp:rt:([^:]+):(writer-full|writer-chat|reader):(.+)$/, async (ctx) => {
     if (!(await requireOwner(ctx))) return;
     const podId = ctx.match[1];
-    const role = ctx.match[2] as "writer" | "reader";
+    const role = ctx.match[2] as "writer-full" | "writer-chat" | "reader";
     try {
       grant(ctx.match[3], podId, role, ctx.from!.id);
     } catch (e) {
@@ -861,9 +868,9 @@ export function startBot(): void {
       pendingGrant.delete(chatId);
       if (!isOwner(ctx.from?.id, ctx.from?.username)) return void ctx.reply("Owner only.");
       const [target, roleArg = "reader"] = ctx.message.text.trim().split(/\s+/);
-      const role = roleArg.toLowerCase();
-      if (!target || !isGrantRole(role)) {
-        return void ctx.reply('Format: "@username writer" or "@username reader" (or a numeric id).');
+      const role = normalizeGrantRole(roleArg);
+      if (!target || !role) {
+        return void ctx.reply('Format: "@user writer-full", "@user writer-chat", or "@user reader" (or a numeric id).');
       }
       const pod = getPodRow(grantReq.podId);
       if (!pod) return void ctx.reply("Pod no longer exists.");
@@ -886,7 +893,7 @@ export function startBot(): void {
       return;
     }
     if (r.kind === "none") return;
-    if (!canWrite(effectiveRole(ctx.from?.id, ctx.from?.username, r.podId))) {
+    if (!canChat(effectiveRole(ctx.from?.id, ctx.from?.username, r.podId))) {
       await ctx.reply("You have read-only access here — you can watch this session but not send to it.");
       return;
     }
