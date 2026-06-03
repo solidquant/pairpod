@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { botConfig } from "./config.js";
+import type { GrantRole } from "./roles.js";
 
 const now = (): string => new Date().toISOString();
 const lc = (u: string): string => u.trim().replace(/^@/, "").toLowerCase();
@@ -49,10 +50,10 @@ export function isOwnerRow(userId: number): boolean {
   return !!getUser(userId)?.isOwner;
 }
 
-export function podRole(userId: number, podId: string): "writer" | "reader" | undefined {
+export function podRole(userId: number, podId: string): GrantRole | undefined {
   const r = getDb()
     .prepare("SELECT role FROM pod_access WHERE user_id = ? AND pod_id = ?")
-    .get(userId, podId) as { role: "writer" | "reader" } | undefined;
+    .get(userId, podId) as { role: GrantRole } | undefined;
   return r?.role;
 }
 
@@ -92,7 +93,7 @@ export function setOwner(userId: number, username?: string | null): void {
     .run(userId, username ? lc(username) : null, now(), now());
 }
 
-function writeAccess(userId: number, podId: string, role: "writer" | "reader", by: number | null): void {
+function writeAccess(userId: number, podId: string, role: GrantRole, by: number | null): void {
   getDb()
     .prepare(
       `INSERT INTO pod_access (user_id, pod_id, role, granted_by, created_at) VALUES (?, ?, ?, ?, ?)
@@ -103,7 +104,7 @@ function writeAccess(userId: number, podId: string, role: "writer" | "reader", b
 
 // Grant by numeric id or @username. An unknown username is parked in pending_invites
 // and applied when that user first messages the bot (promoteInvitee).
-export function grant(target: string, podId: string, role: "writer" | "reader", by: number): { pending: boolean } {
+export function grant(target: string, podId: string, role: GrantRole, by: number): { pending: boolean } {
   const t = target.trim();
   if (/^\d+$/.test(t)) {
     const uid = parseInt(t, 10);
@@ -181,7 +182,7 @@ export function promoteInvitee(userId: number, username?: string): string[] {
       applied.push("owner");
     } else {
       touchUser(userId, uname);
-      writeAccess(userId, r.podId, r.role as "writer" | "reader", null);
+      writeAccess(userId, r.podId, r.role as GrantRole, null);
       applied.push(`${r.role} on ${r.podId}`);
     }
   }

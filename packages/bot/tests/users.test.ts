@@ -14,7 +14,7 @@ delete process.env.TELEGRAM_BOT_TOKEN;
 const { getDb } = await import("../src/db.ts");
 const users = await import("../src/users.ts");
 const access = await import("../src/access.ts");
-const { canWrite } = await import("../src/roles.ts");
+const { canWrite, canChat } = await import("../src/roles.ts");
 
 getDb();
 
@@ -45,15 +45,23 @@ test("grant by unknown username is pending until promotion", () => {
 });
 
 test("re-grant to a now-known user updates the role immediately", () => {
-  const res = users.grant("@alice", "pod-1", "writer", 1);
+  const res = users.grant("@alice", "pod-1", "writer-full", 1);
   assert.equal(res.pending, false);
-  assert.equal(access.effectiveRole(2, "alice", "pod-1"), "writer");
+  assert.equal(access.effectiveRole(2, "alice", "pod-1"), "writer-full");
   assert.equal(canWrite(access.effectiveRole(2, "alice", "pod-1")), true);
 });
 
+test("writer-chat can chat but not write the terminal", () => {
+  users.grant("@alice", "pod-1", "writer-chat", 1);
+  const role = access.effectiveRole(2, "alice", "pod-1");
+  assert.equal(role, "writer-chat");
+  assert.equal(canChat(role), true);
+  assert.equal(canWrite(role), false);
+});
+
 test("grant by numeric id, then revoke", () => {
-  users.grant("3", "pod-2", "writer", 1);
-  assert.equal(users.podRole(3, "pod-2"), "writer");
+  users.grant("3", "pod-2", "writer-full", 1);
+  assert.equal(users.podRole(3, "pod-2"), "writer-full");
   users.revokeAccess(3, "pod-2");
   assert.equal(users.podRole(3, "pod-2"), undefined);
   assert.equal(access.effectiveRole(3, undefined, "pod-2"), null);
@@ -66,7 +74,7 @@ test("owner sees every pod regardless of grants", () => {
 
 test("clearPodAccess removes resolved and pending grants", () => {
   users.grant("@carol", "pod-9", "reader", 1);
-  users.grant("3", "pod-9", "writer", 1);
+  users.grant("3", "pod-9", "writer-full", 1);
   assert.equal(users.listAccess("pod-9").length, 2);
   users.clearPodAccess("pod-9");
   assert.deepEqual(users.listAccess("pod-9"), []);

@@ -363,9 +363,14 @@
             const u8 = new Uint8Array(e.data);
             updateModes(u8);
             term.write(u8, updateJump);
-          } else {
-            term.write(e.data, updateJump);
+            return;
           }
+          // Text frames are control messages (terminal output is always binary).
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg && msg.type === "viewers") { updateViewers(msg.n); return; }
+          } catch (_e) {}
+          term.write(e.data, updateJump);
         };
         ws.onclose = (e) => handleClose(e);
         ws.onerror = () => {};
@@ -375,6 +380,17 @@
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;
         ws.send(data);
         return true;
+      }
+
+      var viewersBadge = null;
+      function updateViewers(n) {
+        if (!viewersBadge) {
+          viewersBadge = document.createElement("div");
+          viewersBadge.style.cssText =
+            "position:fixed;top:6px;left:8px;z-index:20;background:#1a1a1a;color:#aaa;border:1px solid #3a3a3a;border-radius:10px;padding:2px 8px;font-size:11px";
+          document.body.appendChild(viewersBadge);
+        }
+        viewersBadge.textContent = "Connected: " + n;
       }
 
       let lastCols = 0;

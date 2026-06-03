@@ -9,6 +9,7 @@ import { getPodRow } from "./store.js";
 import { targetForPod } from "./targets/index.js";
 import { attachLocal } from "./local/sessions.js";
 import { markActive, markInactive } from "./active-sessions.js";
+import { addViewer, removeViewer } from "./viewers.js";
 
 interface AttachQuery {
   pod?: string;
@@ -70,7 +71,12 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
 
     // While this socket is open the user is watching the terminal; suppress its notifications.
     markActive(podId, sessionId);
-    socket.on("close", () => markInactive(podId, sessionId));
+    const viewerKey = `${podId}:${sessionId}`;
+    addViewer(viewerKey, socket);
+    socket.on("close", () => {
+      markInactive(podId, sessionId);
+      removeViewer(viewerKey, socket);
+    });
 
     if (pod.kind === "local") {
       if (!botConfig.hostMode) {
@@ -99,6 +105,9 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
     }
+
+    // Server-global; ensures sessions created before this setting also share by smallest client.
+    await target.exec(["tmux", "set", "-g", "window-size", "smallest"]).catch(() => {});
 
     await wireAttach(
       socket,

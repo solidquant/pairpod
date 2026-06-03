@@ -157,4 +157,8 @@ function migrate(db: Database.Database): void {
   // A chat session answers in whichever chat last addressed it (reply_chat_id), not only the
   // chat that created it — so @handle from a group is answered in the group, not a DM.
   try { db.exec(`ALTER TABLE session_chat ADD COLUMN reply_chat_id INTEGER`); } catch {}
+
+  // The single "writer" role was split into writer-full / writer-chat; migrate existing grants.
+  try { db.exec(`UPDATE pod_access SET role = 'writer-full' WHERE role = 'writer'`); } catch {}
+  try { db.exec(`UPDATE pending_invites SET role = 'writer-full' WHERE role = 'writer'`); } catch {}
 }
