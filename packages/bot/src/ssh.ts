@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { validateInitData } from "./telegram-auth.js";
-import { isAllowed } from "./access.js";
+import { isOwner } from "./access.js";
 import { botConfig } from "./config.js";
 import { createSshPod, updateSshPod, getSshEndpoint, type SshFields } from "./store.js";
 import { vaultEnabled } from "./vault.js";
@@ -19,9 +19,10 @@ interface SshBody {
   tgData?: string;
 }
 
+// SSH endpoints carry vault-backed secrets and define new pods — owner-only.
 function authed(tgData: string | undefined): boolean {
   const auth = validateInitData(tgData ?? "", botConfig.token, botConfig.authMaxAgeSec);
-  return auth.ok && isAllowed(auth.userId, auth.username);
+  return auth.ok && isOwner(auth.userId, auth.username);
 }
 
 function parseFields(b: SshBody): { fields: SshFields } | { error: string } {

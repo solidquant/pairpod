@@ -18,6 +18,12 @@ import {
   clearChatSession,
   clearChatSessionsForPod,
 } from "./chat-store.js";
+import { clearPodAccess } from "./users.js";
+
+// Host/local pods are a shell on the bot machine — owner-only, never shareable.
+export function isGrantablePod(kind: string): boolean {
+  return kind !== "local";
+}
 
 export type SessionMode = "danger" | "regular" | "terminal" | "chat";
 
@@ -436,6 +442,7 @@ export async function deletePod(id: string): Promise<void> {
   }
   db.prepare("DELETE FROM tg_session_state WHERE pod_id = ?").run(id);
   clearChatSessionsForPod(id);
+  clearPodAccess(id);
   db.prepare("DELETE FROM pods WHERE id = ?").run(id);
 }
 

@@ -54,7 +54,8 @@ export function attachLocal(
   socket: AttachSocket,
   id: string,
   cols: number,
-  rows: number
+  rows: number,
+  readonly = false
 ): void {
   const session = sessions.get(id);
   if (!session) {
@@ -81,6 +82,7 @@ export function attachLocal(
         }
       } catch {}
     }
+    if (readonly) return;
     session.pty.write(raw);
   });
   socket.on("close", () => {

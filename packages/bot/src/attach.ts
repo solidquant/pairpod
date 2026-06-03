@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { getDb } from "./db.js";
 import { wireAttach } from "./routes/attach.js";
 import { validateInitData } from "./telegram-auth.js";
-import { isAllowed } from "./access.js";
+import { effectiveRole } from "./access.js";
+import { canWrite } from "./roles.js";
 import { botConfig } from "./config.js";
 import { getPodRow } from "./store.js";
 import { targetForPod } from "./targets/index.js";
@@ -27,14 +28,6 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       socket.close(4003, "unauthorized");
       return;
     }
-    if (!isAllowed(auth.userId, auth.username)) {
-      req.log.warn(
-        { userId: auth.userId, username: auth.username },
-        "miniapp attach forbidden user"
-      );
-      socket.close(4003, "forbidden");
-      return;
-    }
 
     const podId = q.pod;
     const sessionId = q.session;
@@ -42,6 +35,14 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       socket.close(4004, "missing pod/session");
       return;
     }
+
+    const role = effectiveRole(auth.userId, auth.username, podId);
+    if (role === null) {
+      req.log.warn({ userId: auth.userId, username: auth.username, podId }, "miniapp attach forbidden pod");
+      socket.close(4003, "forbidden");
+      return;
+    }
+    const readonly = !canWrite(role);
 
     const pod = getPodRow(podId);
     if (!pod) {
@@ -68,7 +69,7 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       }
       const cols = q.cols ? parseInt(q.cols, 10) : 80;
       const rows = q.rows ? parseInt(q.rows, 10) : 24;
-      attachLocal(socket, sessionId, cols, rows);
+      attachLocal(socket, sessionId, cols, rows, readonly);
       return;
     }
 
@@ -93,7 +94,8 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       { cols: q.cols, rows: q.rows },
       target,
       sessionId,
-      (msg, extra) => req.log.info({ extra }, msg)
+      (msg, extra) => req.log.info({ extra }, msg),
+      readonly
     );
   });
 }
