@@ -26,6 +26,7 @@
       #app { display: flex; flex-direction: column; height: 100%; }
       #term { flex: 1; min-height: 0; padding: 4px; }
       #status { flex: 0 0 auto; display: none; text-align: center; color: #777; font-size: 11px; padding: 3px 0; background: #0a0a0a; }
+      body.readonly #compose, body.readonly #keys { opacity: 0.4; pointer-events: none; }
       #keys {
         display: flex;
         gap: 10px;
@@ -244,13 +245,15 @@
           .then(function (r) { return r.json(); })
           .then(function (d) {
             if (!d || !d.ok || d.write !== false) return;
-            var c = document.getElementById("compose"); if (c) c.style.display = "none";
-            var k = document.getElementById("keys"); if (k) k.style.display = "none";
+            // Keep the composer + keys in place (so the terminal keeps a writer's dimensions and
+            // doesn't reflow/break) but dim and disable them for read-only viewers.
+            document.body.classList.add("readonly");
+            var input = document.getElementById("input");
+            if (input) { input.disabled = true; input.placeholder = "read-only — viewing"; }
             var b = document.createElement("div");
             b.textContent = "👁 read-only";
             b.style.cssText = "position:fixed;top:6px;right:8px;z-index:20;background:#1a1a1a;color:#aaa;border:1px solid #3a3a3a;border-radius:10px;padding:2px 8px;font-size:11px";
             document.body.appendChild(b);
-            try { refit(); } catch (e) {}
           })
           .catch(function () {});
       }
