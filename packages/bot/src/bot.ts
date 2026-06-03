@@ -33,6 +33,7 @@ import {
 } from "./chat-store.js";
 import { ingestImage } from "./media-ingest.js";
 import { writeToPod } from "./media-transport.js";
+import { setBotUsername, deepLink, webAppUrl } from "./miniapp-link.js";
 
 // chat id -> a pending rename target; the user's next text message becomes the name.
 const pendingRename = new Map<number, { podId: string; sessionId?: string }>();
@@ -72,9 +73,30 @@ async function requireWrite(ctx: Context, podId: string): Promise<boolean> {
   return false;
 }
 
-function miniappLink(podId: string, sessionId: string): string | null {
-  if (!botConfig.miniappUrl) return null;
-  return `${botConfig.miniappUrl}/?pod=${encodeURIComponent(podId)}&session=${encodeURIComponent(sessionId)}`;
+// Render a terminal-open button: a direct-link mini app (url button — valid in groups) when the
+// app short name is configured, else the legacy private-chat web_app button. Returns false when
+// no mini app URL is configured at all (caller shows a "set MINIAPP_URL" hint).
+function addOpenButton(kb: InlineKeyboard, label: string, podId: string, sessionId: string): boolean {
+  const dl = deepLink(podId, sessionId);
+  if (dl) {
+    kb.url(label, dl);
+    return true;
+  }
+  const wa = webAppUrl(podId, sessionId);
+  if (wa) {
+    kb.webApp(label, wa);
+    return true;
+  }
+  return false;
+}
+
+// SSH endpoint forms (ssh.html) aren't migrated to a deep link; their web_app button only works
+// in private chats. In a group, point the user to a DM instead of crashing the keyboard.
+function addSshFormButton(kb: InlineKeyboard, label: string, isPrivate: boolean, id?: string): void {
+  const link = sshFormLink(id);
+  if (!link) return void kb.text(`${label} (set MINIAPP_URL)`, "pp:noapp");
+  if (isPrivate) kb.webApp(label, link);
+  else kb.text(`${label} (DM me)`, "pp:sshdm");
 }
 
 function sshFormLink(id?: string): string | null {
@@ -111,7 +133,7 @@ type Routed =
 
 // Resolve which chat session a message targets: a leading @handle (which also becomes the
 // sticky focus), else the focused session. Shared by text and image handlers.
-function resolveTarget(chatId: number, text: string): Routed {
+function resolveTarget(chatId: number, text: string, isGroup: boolean): Routed {
   const mention = text.match(/^@([a-z0-9][a-z0-9_-]{0,31})\s*([\s\S]*)$/i);
   if (mention) {
     const t = resolveHandle(mention[1]);
@@ -119,6 +141,9 @@ function resolveTarget(chatId: number, text: string): Routed {
     setFocus(chatId, t.podId, t.sessionId);
     return { kind: "ok", podId: t.podId, sessionId: t.sessionId, handle: t.handle, body: mention[2].trim() };
   }
+  // In a shared group, bare text is human chatter — never route it to a session on sticky focus,
+  // or casual messages would land in a skip-permissions Claude. Require an explicit @handle.
+  if (isGroup) return { kind: "none" };
   const focus = getFocus(chatId);
   if (focus) {
     const cs = getChatSession(focus.podId, focus.sessionId);
@@ -184,7 +209,7 @@ async function handleIncomingImage(
     ({ podId, sessionId, handle } = existing);
     body = "";
   } else {
-    const r = resolveTarget(chatId, caption ?? "");
+    const r = resolveTarget(chatId, caption ?? "", ctx.chat!.type !== "private");
     if (r.kind === "hint") return void ctx.reply(r.message);
     if (r.kind === "none") return void ctx.reply("No session in focus — caption it with @handle to pick one.");
     ({ podId, sessionId, handle, body } = r);
@@ -249,19 +274,15 @@ function podsView(uid?: number, uname?: string): { text: string; keyboard: Inlin
   return { text: "Pods — tap one to manage its sessions.", keyboard: kb };
 }
 
-function sshView(): { text: string; keyboard: InlineKeyboard } {
+function sshView(isPrivate: boolean): { text: string; keyboard: InlineKeyboard } {
   const pods = listPods().filter((p) => p.kind === "ssh" && p.status === "running");
   const kb = new InlineKeyboard();
   for (const p of pods) {
     kb.text(`🔌 ${sshName(p)}`, `pp:pod:${p.id}`).row();
-    const editLink = sshFormLink(p.id);
-    if (editLink) kb.webApp("✏️ edit", editLink);
-    else kb.text("✏️ edit (set MINIAPP_URL)", "pp:noapp");
+    addSshFormButton(kb, "✏️ edit", isPrivate, p.id);
     kb.text("test", `pp:sshtest:${p.id}`).text("× delete", `pp:delpod:${p.id}`).row();
   }
-  const link = sshFormLink();
-  if (link) kb.webApp("➕ Add SSH endpoint", link);
-  else kb.text("➕ Add SSH (set MINIAPP_URL)", "pp:noapp");
+  addSshFormButton(kb, "➕ Add SSH endpoint", isPrivate);
   return {
     text: pods.length === 0 ? "No SSH endpoints yet." : "SSH endpoints:",
     keyboard: kb,
@@ -285,10 +306,8 @@ function podView(podId: string, uid?: number, uname?: string): { text: string; k
     const name = cs ? `💬 @${cs.handle}` : sessName(s);
     if (hostDisabled) {
       kb.text(`▶ ${name} (host mode off)`, "pp:hostoff");
-    } else {
-      const link = miniappLink(podId, s.id);
-      if (link) kb.webApp(`${writable ? "▶" : "👁"} ${name}`, link);
-      else kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
+    } else if (!addOpenButton(kb, `${writable ? "▶" : "👁"} ${name}`, podId, s.id)) {
+      kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
     }
     if (writable) {
       kb.text("✏️", `pp:renamesess:${podId}:${s.id}`).text("× kill", `pp:delsess:${podId}:${s.id}`);
@@ -331,9 +350,9 @@ function sessionsView(uid?: number, uname?: string): { text: string; keyboard: I
     const writable = canWrite(effectiveRole(uid, uname, p.id));
     for (const s of p.sessions) {
       const name = `${p.label || p.id} · ${sessName(s)}`;
-      const link = miniappLink(p.id, s.id);
-      if (link) kb.webApp(`${writable ? "▶" : "👁"} ${name}`, link);
-      else kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
+      if (!addOpenButton(kb, `${writable ? "▶" : "👁"} ${name}`, p.id, s.id)) {
+        kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
+      }
       if (writable) kb.text("× kill", `pp:delsess:${p.id}:${s.id}`);
       kb.row();
       count++;
@@ -385,12 +404,15 @@ export function startBot(): void {
 
   const bot = new Bot(botConfig.token);
   setNotifierBot(bot);
+  // Needed to build direct-link mini app deep links (t.me/<bot>/<app>?startapp=…).
+  bot.api.getMe().then((me) => setBotUsername(me.username)).catch((e) => console.error("getMe failed", e));
 
   bot.use(async (ctx, next) => {
     if (!isAllowed(ctx.from?.id, ctx.from?.username)) {
-      console.warn(
-        `bot rejected user id=${ctx.from?.id} username=@${ctx.from?.username ?? "?"}`
-      );
+      // In groups (privacy off) the bot sees every member's messages; don't log-spam non-members.
+      if (ctx.chat?.type === "private") {
+        console.warn(`bot rejected user id=${ctx.from?.id} username=@${ctx.from?.username ?? "?"}`);
+      }
       return;
     }
     const chatId = ctx.chat?.id;
@@ -470,8 +492,15 @@ export function startBot(): void {
   });
 
   bot.command("ssh", async (ctx) => {
-    const v = sshView();
+    const v = sshView(ctx.chat?.type === "private");
     await ctx.reply(v.text, { reply_markup: v.keyboard });
+  });
+
+  bot.callbackQuery("pp:sshdm", async (ctx) => {
+    await ctx.answerCallbackQuery({
+      text: "SSH endpoint forms only open in a private chat with me — message me directly to add or edit one.",
+      show_alert: true,
+    });
   });
 
   bot.callbackQuery("pp:noapp", async (ctx) => {
@@ -508,9 +537,7 @@ export function startBot(): void {
     if (!(await requireOwner(ctx))) return;
     const kb = new InlineKeyboard().text("🐳 Docker", "pp:newdocker");
     if (botConfig.hostMode) kb.text("💻 Host", "pp:newhost");
-    const link = sshFormLink();
-    if (link) kb.webApp("🔌 SSH", link);
-    else kb.text("🔌 SSH (set MINIAPP_URL)", "pp:noapp");
+    addSshFormButton(kb, "🔌 SSH", ctx.chat?.type === "private");
     kb.row().text("‹ Pods", "pp:pods");
     await ctx.editMessageText("New pod — choose a backend:", { reply_markup: kb });
     await ctx.answerCallbackQuery();
@@ -755,7 +782,7 @@ export function startBot(): void {
     }
 
     // 4. Routing a message to a chat-bridged session.
-    const r = resolveTarget(chatId, ctx.message.text);
+    const r = resolveTarget(chatId, ctx.message.text, ctx.chat.type !== "private");
     if (r.kind === "hint") {
       await ctx.reply(r.message);
       return;
