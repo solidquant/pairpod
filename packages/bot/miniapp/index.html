@@ -25,6 +25,7 @@
       }
       #app { display: flex; flex-direction: column; height: 100%; }
       #term { flex: 1; min-height: 0; padding: 4px; }
+      #status { flex: 0 0 auto; display: none; text-align: center; color: #777; font-size: 11px; padding: 3px 0; background: #0a0a0a; }
       #keys {
         display: flex;
         gap: 10px;
@@ -187,6 +188,7 @@
           <button class="key" data-key="right">&#8594;</button>
         </div>
       </div>
+      <div id="status"></div>
     </div>
     <div id="overlay"><button id="reconnect">Disconnected — tap to reconnect</button></div>
     <div id="toast"></div>
@@ -382,15 +384,14 @@
         return true;
       }
 
-      var viewersBadge = null;
+      // A thin strip below the key buttons, shown only when 2+ people share the session.
       function updateViewers(n) {
-        if (!viewersBadge) {
-          viewersBadge = document.createElement("div");
-          viewersBadge.style.cssText =
-            "position:fixed;top:6px;left:8px;z-index:20;background:#1a1a1a;color:#aaa;border:1px solid #3a3a3a;border-radius:10px;padding:2px 8px;font-size:11px";
-          document.body.appendChild(viewersBadge);
-        }
-        viewersBadge.textContent = "Connected: " + n;
+        var el = document.getElementById("status");
+        if (!el) return;
+        var show = n >= 2;
+        el.style.display = show ? "block" : "none";
+        if (show) el.textContent = "Connected: " + n;
+        refit();
       }
 
       let lastCols = 0;
