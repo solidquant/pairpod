@@ -11,5 +11,5 @@ allowBuilds:
   ssh2: false
 
 minimumReleaseAgeExclude:
-  - pairpod-bot@0.3.0
-  - pairpod@0.3.0
+  - pairpod-bot@0.4.0
+  - pairpod@0.4.0
