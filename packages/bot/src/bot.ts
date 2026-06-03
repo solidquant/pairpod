@@ -259,6 +259,44 @@ async function handleIncomingImage(
   }
 }
 
+function helpText(): string {
+  return [
+    "pairpod terminal bot",
+    "",
+    "/menu — tap-to-navigate panel (pin it in the group for quick access)",
+    "/pods — list pods; create/delete; open a pod to manage its sessions",
+    "/sessions — list every session with an Open button",
+    "/ssh — register/test/delete SSH endpoints (remote hosts as pods)",
+    "",
+    botConfig.hostMode
+      ? "New pod backends: 🐳 Docker (a fresh container), 🔌 SSH (a remote host), or 💻 Host (a shell on the bot machine)."
+      : "New pod backends: 🐳 Docker (a fresh container) or 🔌 SSH (a remote host).",
+    "",
+    "Sessions come in four modes (Docker and SSH):",
+    "⚡ skip-perms — claude --dangerously-skip-permissions",
+    "🔒 regular — claude (answer permission prompts in the terminal)",
+    "🖥 terminal — a plain shell",
+    "💬 chat — talk to claude right here in Telegram; you name it and address it as @handle",
+    "SSH Claude sessions need claude installed + logged in on the remote, and MINIAPP_URL set.",
+    "",
+    "▶ opens a byte-identical terminal (xterm) as a Telegram mini app.",
+    'For a 💬 chat session, just message @handle (e.g. "@sess1 how are things?") — replies come back here.',
+  ].join("\n");
+}
+
+function menuView(): { text: string; keyboard: InlineKeyboard } {
+  const kb = new InlineKeyboard()
+    .text("📦 Pods", "pp:m:pods")
+    .text("🗂 Sessions", "pp:m:sessions")
+    .row()
+    .text("🔌 SSH", "pp:m:ssh")
+    .text("❓ Help", "pp:m:help");
+  return {
+    text: "📋 pairpod menu — tap to open. Pin this message for quick access in the group.",
+    keyboard: kb,
+  };
+}
+
 function podsView(uid?: number, uname?: string): { text: string; keyboard: InlineKeyboard } {
   const owner = isOwner(uid, uname);
   const pods = listPods().filter((p) => p.status === "running" && effectiveRole(uid, uname, p.id) !== null);
@@ -311,9 +349,8 @@ function podView(podId: string, uid?: number, uname?: string): { text: string; k
     } else if (!addOpenButton(kb, `${writable ? "▶" : "👁"} ${name}`, podId, s.id)) {
       kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
     }
-    if (writable) {
-      kb.text("✏️", `pp:renamesess:${podId}:${s.id}`).text("× kill", `pp:delsess:${podId}:${s.id}`);
-    }
+    if (writable) kb.text("✏️", `pp:renamesess:${podId}:${s.id}`);
+    if (owner) kb.text("× kill", `pp:delsess:${podId}:${s.id}`);
     kb.row();
   }
 
@@ -345,6 +382,7 @@ function podView(podId: string, uid?: number, uname?: string): { text: string; k
 }
 
 function sessionsView(uid?: number, uname?: string): { text: string; keyboard: InlineKeyboard } {
+  const owner = isOwner(uid, uname);
   const pods = listPods().filter((p) => effectiveRole(uid, uname, p.id) !== null);
   const kb = new InlineKeyboard();
   let count = 0;
@@ -355,7 +393,7 @@ function sessionsView(uid?: number, uname?: string): { text: string; keyboard: I
       if (!addOpenButton(kb, `${writable ? "▶" : "👁"} ${name}`, p.id, s.id)) {
         kb.text(`▶ ${name} (set MINIAPP_URL)`, "pp:noapp");
       }
-      if (writable) kb.text("× kill", `pp:delsess:${p.id}:${s.id}`);
+      if (owner) kb.text("× kill", `pp:delsess:${p.id}:${s.id}`);
       kb.row();
       count++;
     }
@@ -417,6 +455,14 @@ export function startBot(): void {
       }
       return;
     }
+    // Only owners get a 1:1 DM with the bot. Everyone else uses the group the owner invited them
+    // to. Promotion (pending invites) still happens from their group messages.
+    if (ctx.chat?.type === "private" && !isOwner(ctx.from?.id, ctx.from?.username)) {
+      await ctx
+        .reply("👋 Use pairpod from your team's group chat — the bot doesn't take private messages from members.")
+        .catch(() => {});
+      return;
+    }
     const chatId = ctx.chat?.id;
     if (chatId !== undefined) recordChat(chatId);
     await maybePromoteInvitee(ctx);
@@ -441,29 +487,12 @@ export function startBot(): void {
   });
 
   bot.command("help", async (ctx) => {
-    await ctx.reply(
-      [
-        "pairpod terminal bot",
-        "",
-        "/pods — list pods; create/delete; open a pod to manage its sessions",
-        "/sessions — list every session with an Open button",
-        "/ssh — register/test/delete SSH endpoints (remote hosts as pods)",
-        "",
-        botConfig.hostMode
-          ? "New pod backends: 🐳 Docker (a fresh container), 🔌 SSH (a remote host), or 💻 Host (a shell on the bot machine)."
-          : "New pod backends: 🐳 Docker (a fresh container) or 🔌 SSH (a remote host).",
-        "",
-        "Sessions come in four modes (Docker and SSH):",
-        "⚡ skip-perms — claude --dangerously-skip-permissions",
-        "🔒 regular — claude (answer permission prompts in the terminal)",
-        "🖥 terminal — a plain shell",
-        "💬 chat — talk to claude right here in Telegram; you name it and address it as @handle",
-        "SSH Claude sessions need claude installed + logged in on the remote, and MINIAPP_URL set.",
-        "",
-        "▶ opens a byte-identical terminal (xterm) as a Telegram mini app.",
-        "For a 💬 chat session, just message @handle (e.g. \"@sess1 how are things?\") — replies come back here.",
-      ].join("\n")
-    );
+    await ctx.reply(helpText());
+  });
+
+  bot.command("menu", async (ctx) => {
+    const v = menuView();
+    await ctx.reply(v.text, { reply_markup: v.keyboard });
   });
 
   bot.command("whoami", async (ctx) => {
@@ -521,6 +550,27 @@ export function startBot(): void {
 
   bot.callbackQuery("pp:noop", async (ctx) => {
     await ctx.answerCallbackQuery();
+  });
+
+  // Menu buttons open a fresh message (not editing this one) so a pinned /menu stays put.
+  bot.callbackQuery("pp:m:pods", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const v = podsView(ctx.from?.id, ctx.from?.username);
+    await ctx.reply(v.text, { reply_markup: v.keyboard });
+  });
+  bot.callbackQuery("pp:m:sessions", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const v = sessionsView(ctx.from?.id, ctx.from?.username);
+    await ctx.reply(v.text, { reply_markup: v.keyboard });
+  });
+  bot.callbackQuery("pp:m:ssh", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const v = sshView(ctx.chat?.type === "private");
+    await ctx.reply(v.text, { reply_markup: v.keyboard });
+  });
+  bot.callbackQuery("pp:m:help", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(helpText());
   });
 
   bot.callbackQuery("pp:pods", async (ctx) => {
@@ -598,6 +648,22 @@ export function startBot(): void {
   });
 
   bot.callbackQuery(/^pp:delpod:(.+)$/, async (ctx) => {
+    if (!(await requireOwner(ctx))) return;
+    const podId = ctx.match[1];
+    const pod = getPod(podId);
+    const name = pod?.label || podId;
+    const n = pod?.sessions.length ?? 0;
+    const kb = new InlineKeyboard()
+      .text("✅ Yes, delete", `pp:delpodyes:${podId}`)
+      .text("✗ Cancel", `pp:pod:${podId}`);
+    await ctx.editMessageText(
+      `⚠️ Delete pod "${name}" and its ${n} session(s)? This can't be undone.`,
+      { reply_markup: kb }
+    );
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^pp:delpodyes:(.+)$/, async (ctx) => {
     if (!(await requireOwner(ctx))) return;
     const podId = ctx.match[1];
     await ctx.answerCallbackQuery({ text: "Deleting pod…" });
@@ -708,8 +774,21 @@ export function startBot(): void {
   });
 
   bot.callbackQuery(/^pp:delsess:(.+):(.+)$/, async (ctx) => {
+    if (!(await requireOwner(ctx))) return;
     const podId = ctx.match[1];
-    if (!(await requireWrite(ctx, podId))) return;
+    const sessionId = ctx.match[2];
+    const kb = new InlineKeyboard()
+      .text("✅ Yes, kill", `pp:delsessyes:${podId}:${sessionId}`)
+      .text("✗ Cancel", `pp:pod:${podId}`);
+    await ctx.editMessageText(`⚠️ Kill session ${sessionId} on ${podId}? This ends it for everyone.`, {
+      reply_markup: kb,
+    });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^pp:delsessyes:(.+):(.+)$/, async (ctx) => {
+    if (!(await requireOwner(ctx))) return;
+    const podId = ctx.match[1];
     const sessionId = ctx.match[2];
     await ctx.answerCallbackQuery({ text: "Killing session…" });
     try {
@@ -829,15 +908,19 @@ export function startBot(): void {
 
   bot.catch((err) => console.error("bot error", err));
 
+  const commands = [
+    { command: "menu", description: "Quick-access button panel (pin it in a group)" },
+    { command: "pods", description: "List pods; create, delete, manage sessions" },
+    { command: "sessions", description: "List all sessions with an open button" },
+    { command: "ssh", description: "List SSH endpoints; add, test, delete" },
+    { command: "whoami", description: "Show your Telegram id and username" },
+    { command: "help", description: "How the terminal bot works" },
+  ];
+  bot.api.setMyCommands(commands).catch((e) => console.error("setMyCommands failed", e));
+  // Register for group chats too, so typing "/" in the group shows the command list.
   bot.api
-    .setMyCommands([
-      { command: "pods", description: "List pods; create, delete, manage sessions" },
-      { command: "sessions", description: "List all sessions with an open button" },
-      { command: "ssh", description: "List SSH endpoints; add, test, delete" },
-      { command: "whoami", description: "Show your Telegram id and username" },
-      { command: "help", description: "How the terminal bot works" },
-    ])
-    .catch((e) => console.error("setMyCommands failed", e));
+    .setMyCommands(commands, { scope: { type: "all_group_chats" } })
+    .catch((e) => console.error("setMyCommands (groups) failed", e));
 
   run(bot);
   console.info("bot started");
