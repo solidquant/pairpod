@@ -153,4 +153,8 @@ function migrate(db: Database.Database): void {
       PRIMARY KEY (pod_id, session_id)
     );
   `);
+
+  // A chat session answers in whichever chat last addressed it (reply_chat_id), not only the
+  // chat that created it — so @handle from a group is answered in the group, not a DM.
+  try { db.exec(`ALTER TABLE session_chat ADD COLUMN reply_chat_id INTEGER`); } catch {}
 }

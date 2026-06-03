@@ -29,6 +29,7 @@ import {
   listChatSessions,
   setFocus,
   getFocus,
+  setReplyChat,
   normalizeHandle,
 } from "./chat-store.js";
 import { ingestImage } from "./media-ingest.js";
@@ -218,6 +219,7 @@ async function handleIncomingImage(
   if (!canWrite(effectiveRole(ctx.from?.id, ctx.from?.username, podId))) {
     return void ctx.reply("You have read-only access here — you can watch this session but not send to it.");
   }
+  setReplyChat(podId, sessionId, chatId);
 
   const pod = getPodRow(podId);
   if (!pod) return;
@@ -792,6 +794,8 @@ export function startBot(): void {
       await ctx.reply("You have read-only access here — you can watch this session but not send to it.");
       return;
     }
+    // Answer in the chat this message came from (group or DM), not just where the session was made.
+    setReplyChat(r.podId, r.sessionId, chatId);
     if (!r.body) {
       await ctx.reply(`▶ now talking to @${r.handle}`);
       return;

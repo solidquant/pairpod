@@ -61,6 +61,21 @@ export function getChatSession(podId: string, sessionId: string): ChatSession | 
     .get(podId, sessionId) as ChatSession | undefined;
 }
 
+// The chat a session should answer in right now: the last chat to address it, falling back to
+// the chat that created it. Lets one @handle be driven from both a group and a DM.
+export function setReplyChat(podId: string, sessionId: string, chatId: number): void {
+  getDb()
+    .prepare("UPDATE session_chat SET reply_chat_id = ? WHERE pod_id = ? AND session_id = ?")
+    .run(chatId, podId, sessionId);
+}
+
+export function getReplyChat(podId: string, sessionId: string): number | undefined {
+  const r = getDb()
+    .prepare("SELECT COALESCE(reply_chat_id, chat_id) AS c FROM session_chat WHERE pod_id = ? AND session_id = ?")
+    .get(podId, sessionId) as { c: number } | undefined;
+  return r?.c;
+}
+
 export function listChatSessions(chatId?: number): ChatSession[] {
   const db = getDb();
   const cols = "pod_id AS podId, session_id AS sessionId, chat_id AS chatId, handle";
