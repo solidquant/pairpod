@@ -414,7 +414,9 @@ function accessView(podId: string): { text: string; keyboard: InlineKeyboard } {
   }
   for (const e of listAccess(podId)) {
     const who = e.username ? `@${e.username}` : `id ${e.userId}`;
-    kb.text(`${who} — ${e.role}${e.pending ? " (pending)" : ""}`, "pp:noop");
+    const next = e.role === "writer" ? "reader" : "writer";
+    const target = e.pending ? e.username ?? "" : String(e.userId);
+    kb.text(`${who}: ${e.role}${e.pending ? " (pending)" : ""} → make ${next}`, `pp:rt:${podId}:${next}:${target}`);
     if (e.pending) kb.text("× remove", `pp:revpend:${podId}:${e.username}`);
     else kb.text("× remove", `pp:revuser:${podId}:${e.userId}`);
     kb.row();
@@ -423,7 +425,7 @@ function accessView(podId: string): { text: string; keyboard: InlineKeyboard } {
   kb.text("‹ Back", `pp:pod:${podId}`);
   const label = pod.label || podId;
   return {
-    text: `Access for "${label}" — you (owner) always have full access.\nAdd writers (can drive sessions) or readers (read-only terminal).`,
+    text: `Access for "${label}" — you (owner) always have full access.\nTap a name to flip writer ⇄ reader; × removes access. ➕ Add grants a new user.`,
     keyboard: kb,
   };
 }
@@ -698,6 +700,21 @@ export function startBot(): void {
     await ctx.reply(`Send "@username writer" or "@username reader" (or a numeric id) to grant access to ${podId}.`, {
       reply_markup: { force_reply: true, input_field_placeholder: "@user writer" },
     });
+  });
+
+  bot.callbackQuery(/^pp:rt:([^:]+):(writer|reader):(.+)$/, async (ctx) => {
+    if (!(await requireOwner(ctx))) return;
+    const podId = ctx.match[1];
+    const role = ctx.match[2] as "writer" | "reader";
+    try {
+      grant(ctx.match[3], podId, role, ctx.from!.id);
+    } catch (e) {
+      await ctx.answerCallbackQuery({ text: (e as Error).message, show_alert: true });
+      return;
+    }
+    const v = accessView(podId);
+    await ctx.editMessageText(v.text, { reply_markup: v.keyboard });
+    await ctx.answerCallbackQuery({ text: `Set ${role}.` });
   });
 
   bot.callbackQuery(/^pp:revuser:([^:]+):(\d+)$/, async (ctx) => {
