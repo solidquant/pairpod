@@ -30,6 +30,8 @@ export const botConfig = {
   miniappUrl,
   // BotFather /newapp short name, for direct-link mini app deep links (work in group chats).
   appShortName: (process.env.MINIAPP_APP_SHORT_NAME ?? "").trim(),
+  // Use the bot's Main Mini App instead (no /newapp): link form t.me/<bot>?startapp=… .
+  mainMiniApp: (process.env.MINIAPP_MAIN ?? "").toLowerCase() === "true",
   port: Number(process.env.PORT ?? 40002),
   allowedUserIds: config.telegramAllowedUserIds,
   allowedUsernames: (process.env.TELEGRAM_ALLOWED_USERNAMES ?? "")
