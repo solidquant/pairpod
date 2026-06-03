@@ -22,11 +22,12 @@ export async function wireAttach(
 
   log(`attach start session=${sessionId} cols=${cols} rows=${rows} readonly=${readonly}`);
 
-  // -r makes tmux ignore all client input: a reader's keystrokes can't reach the program even
-  // if a tampered client sends them. The socket-side drop below is belt-and-suspenders.
+  // No -d: multiple clients share the session (collaborative view), instead of a new viewer
+  // detaching the previous one. -r makes a reader's client ignore all input (the socket-side
+  // drop below is belt-and-suspenders).
   const attachCmd = readonly
-    ? ["tmux", "attach", "-d", "-r", "-t", sessionId]
-    : ["tmux", "attach", "-d", "-t", sessionId];
+    ? ["tmux", "attach", "-r", "-t", sessionId]
+    : ["tmux", "attach", "-t", sessionId];
 
   let pty: PtySession;
   try {

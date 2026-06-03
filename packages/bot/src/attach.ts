@@ -19,6 +19,17 @@ interface AttachQuery {
 }
 
 export async function attachRoutes(app: FastifyInstance): Promise<void> {
+  // The mini app asks whether this user may write to the pod, to declutter the read-only UI.
+  // (Server-side enforcement still happens on /attach and /upload regardless of this answer.)
+  app.get("/access", async (req, reply) => {
+    const q = req.query as { pod?: string; tgData?: string };
+    const auth = validateInitData(q.tgData ?? "", botConfig.token, botConfig.authMaxAgeSec);
+    if (!auth.ok || !q.pod) return reply.code(403).send({ ok: false });
+    const role = effectiveRole(auth.userId, auth.username, q.pod);
+    if (role === null) return reply.code(403).send({ ok: false });
+    return reply.send({ ok: true, write: canWrite(role) });
+  });
+
   app.get("/attach", { websocket: true }, async (socket, req) => {
     const q = req.query as AttachQuery;
 
