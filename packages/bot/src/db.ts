@@ -78,6 +78,37 @@ function migrate(db: Database.Database): void {
     );
   `);
 
+  // Multi-user access. users is the roster (owners flagged); pod_access holds per-pod
+  // writer/reader grants for guests; pending_invites parks grants issued by @username before
+  // that user's numeric id is known (pod_id '' = a global owner grant from the env allowlist).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      user_id    INTEGER PRIMARY KEY,
+      username   TEXT,
+      is_owner   INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pod_access (
+      user_id    INTEGER NOT NULL,
+      pod_id     TEXT NOT NULL,
+      role       TEXT NOT NULL,
+      granted_by INTEGER,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, pod_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_invites (
+      username   TEXT NOT NULL,
+      pod_id     TEXT NOT NULL DEFAULT '',
+      role       TEXT NOT NULL,
+      invited_by INTEGER,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (username, pod_id)
+    );
+  `);
+
   // Spool tailer progress per pod. byte_offset skips already-read bytes on a fresh
   // connect; last_ts is the authoritative dedup watermark (max event ts delivered) so
   // a reconnect, restart, or spool rotation never re-sends an event.
@@ -122,4 +153,8 @@ function migrate(db: Database.Database): void {
       PRIMARY KEY (pod_id, session_id)
     );
   `);
+
+  // A chat session answers in whichever chat last addressed it (reply_chat_id), not only the
+  // chat that created it — so @handle from a group is answered in the group, not a DM.
+  try { db.exec(`ALTER TABLE session_chat ADD COLUMN reply_chat_id INTEGER`); } catch {}
 }

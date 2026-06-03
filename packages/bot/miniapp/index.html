@@ -216,11 +216,42 @@
       }
 
       const params = new URLSearchParams(location.search);
-      const pod = params.get("pod") || "";
-      const session = params.get("session") || "";
+      let pod = params.get("pod") || "";
+      let session = params.get("session") || "";
 
       // Arrived via a notification's "Open" button: delete that message so the chat stays clean.
-      const dismissCid = params.get("cid"), dismissMid = params.get("mid");
+      let dismissCid = params.get("cid"), dismissMid = params.get("mid");
+
+      // Launched as a direct-link mini app (the group-friendly path): pod/session ride in
+      // start_param (base64url of "pod/session" or "pod/session/cid/mid"), not the query string.
+      if (!pod && tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) {
+        try {
+          let b64 = tg.initDataUnsafe.start_param.replace(/-/g, "+").replace(/_/g, "/");
+          while (b64.length % 4) b64 += "=";
+          const bits = atob(b64).split("/");
+          pod = bits[0] || "";
+          session = bits[1] || "";
+          if (bits.length >= 4) { dismissCid = bits[2]; dismissMid = bits[3]; }
+        } catch (e) {}
+      }
+
+      // Read-only viewers: drop the composer + control keys (the server enforces read-only
+      // regardless; this just declutters). A small badge marks the terminal as view-only.
+      if (pod) {
+        fetch(location.origin + "/access?pod=" + encodeURIComponent(pod) + "&tgData=" + encodeURIComponent((tg && tg.initData) || ""))
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d || !d.ok || d.write !== false) return;
+            var c = document.getElementById("compose"); if (c) c.style.display = "none";
+            var k = document.getElementById("keys"); if (k) k.style.display = "none";
+            var b = document.createElement("div");
+            b.textContent = "👁 read-only";
+            b.style.cssText = "position:fixed;top:6px;right:8px;z-index:20;background:#1a1a1a;color:#aaa;border:1px solid #3a3a3a;border-radius:10px;padding:2px 8px;font-size:11px";
+            document.body.appendChild(b);
+            try { refit(); } catch (e) {}
+          })
+          .catch(function () {});
+      }
       if (dismissCid && dismissMid) {
         fetch(location.origin + "/dismiss", {
           method: "POST",

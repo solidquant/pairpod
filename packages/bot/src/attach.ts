@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { getDb } from "./db.js";
 import { wireAttach } from "./routes/attach.js";
 import { validateInitData } from "./telegram-auth.js";
-import { isAllowed } from "./access.js";
+import { effectiveRole } from "./access.js";
+import { canWrite } from "./roles.js";
 import { botConfig } from "./config.js";
 import { getPodRow } from "./store.js";
 import { targetForPod } from "./targets/index.js";
@@ -18,6 +19,17 @@ interface AttachQuery {
 }
 
 export async function attachRoutes(app: FastifyInstance): Promise<void> {
+  // The mini app asks whether this user may write to the pod, to declutter the read-only UI.
+  // (Server-side enforcement still happens on /attach and /upload regardless of this answer.)
+  app.get("/access", async (req, reply) => {
+    const q = req.query as { pod?: string; tgData?: string };
+    const auth = validateInitData(q.tgData ?? "", botConfig.token, botConfig.authMaxAgeSec);
+    if (!auth.ok || !q.pod) return reply.code(403).send({ ok: false });
+    const role = effectiveRole(auth.userId, auth.username, q.pod);
+    if (role === null) return reply.code(403).send({ ok: false });
+    return reply.send({ ok: true, write: canWrite(role) });
+  });
+
   app.get("/attach", { websocket: true }, async (socket, req) => {
     const q = req.query as AttachQuery;
 
@@ -27,14 +39,6 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       socket.close(4003, "unauthorized");
       return;
     }
-    if (!isAllowed(auth.userId, auth.username)) {
-      req.log.warn(
-        { userId: auth.userId, username: auth.username },
-        "miniapp attach forbidden user"
-      );
-      socket.close(4003, "forbidden");
-      return;
-    }
 
     const podId = q.pod;
     const sessionId = q.session;
@@ -42,6 +46,14 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       socket.close(4004, "missing pod/session");
       return;
     }
+
+    const role = effectiveRole(auth.userId, auth.username, podId);
+    if (role === null) {
+      req.log.warn({ userId: auth.userId, username: auth.username, podId }, "miniapp attach forbidden pod");
+      socket.close(4003, "forbidden");
+      return;
+    }
+    const readonly = !canWrite(role);
 
     const pod = getPodRow(podId);
     if (!pod) {
@@ -68,7 +80,7 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       }
       const cols = q.cols ? parseInt(q.cols, 10) : 80;
       const rows = q.rows ? parseInt(q.rows, 10) : 24;
-      attachLocal(socket, sessionId, cols, rows);
+      attachLocal(socket, sessionId, cols, rows, readonly);
       return;
     }
 
@@ -93,7 +105,8 @@ export async function attachRoutes(app: FastifyInstance): Promise<void> {
       { cols: q.cols, rows: q.rows },
       target,
       sessionId,
-      (msg, extra) => req.log.info({ extra }, msg)
+      (msg, extra) => req.log.info({ extra }, msg),
+      readonly
     );
   });
 }

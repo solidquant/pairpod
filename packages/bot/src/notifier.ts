@@ -3,6 +3,7 @@ import path from "node:path";
 import { type Bot, InlineKeyboard } from "grammy";
 import { config as shared } from "./config.js";
 import { botConfig } from "./config.js";
+import { deepLink, webAppUrl } from "./miniapp-link.js";
 import { mdToTelegramHtml, escapeHtml } from "./tg-format.js";
 
 const STORE = path.join(path.dirname(shared.dbPath), "notify-chats.json");
@@ -46,13 +47,18 @@ export async function pushNotification(text: string, link?: NotificationLink): P
   for (const id of chatIds) {
     try {
       const sent = await bot.api.sendMessage(id, text);
-      if (botConfig.miniappUrl && link) {
-        // cid+mid let the mini-app ask the bot to delete this very message once opened.
-        const url =
-          `${botConfig.miniappUrl}/?pod=${encodeURIComponent(link.pod)}` +
-          `&session=${encodeURIComponent(link.session)}&cid=${id}&mid=${sent.message_id}`;
-        const reply_markup = new InlineKeyboard().webApp(`▶ Open ${link.buttonLabel}`, url);
-        await bot.api.editMessageReplyMarkup(id, sent.message_id, { reply_markup });
+      if (link) {
+        // cid+mid let the mini-app ask the bot to delete this very message once opened. Prefer a
+        // direct-link mini app (url button, valid in groups); fall back to the web_app button.
+        const dl = deepLink(link.pod, link.session, id, sent.message_id);
+        const label = `▶ Open ${link.buttonLabel}`;
+        let reply_markup: InlineKeyboard | undefined;
+        if (dl) reply_markup = new InlineKeyboard().url(label, dl);
+        else {
+          const wa = webAppUrl(link.pod, link.session, id, sent.message_id);
+          if (wa) reply_markup = new InlineKeyboard().webApp(label, wa);
+        }
+        if (reply_markup) await bot.api.editMessageReplyMarkup(id, sent.message_id, { reply_markup });
       }
     } catch {}
   }

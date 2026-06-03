@@ -18,6 +18,12 @@ import {
   clearChatSession,
   clearChatSessionsForPod,
 } from "./chat-store.js";
+import { clearPodAccess } from "./users.js";
+
+// Host/local pods are a shell on the bot machine — owner-only, never shareable.
+export function isGrantablePod(kind: string): boolean {
+  return kind !== "local";
+}
 
 export type SessionMode = "danger" | "regular" | "terminal" | "chat";
 
@@ -436,6 +442,7 @@ export async function deletePod(id: string): Promise<void> {
   }
   db.prepare("DELETE FROM tg_session_state WHERE pod_id = ?").run(id);
   clearChatSessionsForPod(id);
+  clearPodAccess(id);
   db.prepare("DELETE FROM pods WHERE id = ?").run(id);
 }
 
@@ -506,9 +513,12 @@ export async function createSession(
   // mouse on → wheel/swipe scrolls tmux's own scrollback (copy-mode) for shell
   // panes and forwards to mouse-aware apps like Claude. Applied to fresh servers
   // via the config and to an already-running server via the explicit set below.
+  // window-size latest: with several clients sharing a session (collaborative view), size the
+  // grid to the most-recently-active client instead of the smallest, so one small phone doesn't
+  // shrink everyone's terminal.
   await target.exec([
     "sh", "-c",
-    "printf 'set -g mouse on\\nset -g history-limit 50000\\n' > \"$HOME/.tmux.conf\"",
+    "printf 'set -g mouse on\\nset -g history-limit 50000\\nset -g window-size latest\\n' > \"$HOME/.tmux.conf\"",
   ]);
 
   const args = ["tmux", "new-session", "-d", "-s", sid, "-c", cwd];
@@ -531,6 +541,7 @@ export async function createSession(
   // terminal: no command → tmux launches the host's default shell
   await target.exec(args);
   await target.exec(["tmux", "set", "-g", "mouse", "on"]);
+  await target.exec(["tmux", "set", "-g", "window-size", "latest"]);
 
   if (mode === "chat" && handle && opts.chatId !== undefined) {
     registerChatSession(podId, sid, opts.chatId, handle);

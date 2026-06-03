@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "./db.js";
 import { validateInitData } from "./telegram-auth.js";
-import { isAllowed } from "./access.js";
+import { effectiveRole } from "./access.js";
+import { canWrite } from "./roles.js";
 import { botConfig } from "./config.js";
 import { getPodRow } from "./store.js";
 import { sniffImage, hashName } from "./media-ingest.js";
@@ -26,12 +27,13 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
   app.post("/upload", { bodyLimit: MAX }, async (req, reply) => {
     const q = req.query as UploadQuery;
     const auth = validateInitData(q.tgData ?? "", botConfig.token, botConfig.authMaxAgeSec);
-    if (!auth.ok || !isAllowed(auth.userId, auth.username)) {
-      return reply.code(403).send({ error: "forbidden" });
-    }
+    if (!auth.ok) return reply.code(403).send({ error: "forbidden" });
     const podId = q.pod;
     const sessionId = q.session;
     if (!podId || !sessionId) return reply.code(400).send({ error: "missing pod/session" });
+    if (!canWrite(effectiveRole(auth.userId, auth.username, podId))) {
+      return reply.code(403).send({ error: "forbidden" });
+    }
     const pod = getPodRow(podId);
     if (!pod) return reply.code(404).send({ error: "pod not found" });
     const exists = getDb()

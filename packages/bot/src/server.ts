@@ -13,6 +13,7 @@ import { dismissRoutes } from "./dismiss.js";
 import { sshRoutes } from "./ssh.js";
 import { uploadRoutes } from "./upload.js";
 import { pruneLocalSessions } from "./store.js";
+import { bootstrapOwners } from "./users.js";
 import { startBot } from "./bot.js";
 import { startNotifyTailers } from "./notify-tailer.js";
 import { startTranscriptTailers } from "./transcript-tailer.js";
@@ -71,6 +72,7 @@ export async function startServer(): Promise<void> {
   });
 
   getDb();
+  bootstrapOwners();
   pruneLocalSessions();
   // Docker is optional: only needed for Docker pods. Don't block startup on it.
   try {

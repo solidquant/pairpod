@@ -15,15 +15,23 @@ export async function wireAttach(
   target: PodTarget,
   sessionId: string,
   log: (msg: string, extra?: unknown) => void,
+  readonly = false,
 ): Promise<void> {
   const cols = query.cols ? parseInt(query.cols, 10) : 80;
   const rows = query.rows ? parseInt(query.rows, 10) : 24;
 
-  log(`attach start session=${sessionId} cols=${cols} rows=${rows}`);
+  log(`attach start session=${sessionId} cols=${cols} rows=${rows} readonly=${readonly}`);
+
+  // No -d: multiple clients share the session (collaborative view), instead of a new viewer
+  // detaching the previous one. -r makes a reader's client ignore all input (the socket-side
+  // drop below is belt-and-suspenders).
+  const attachCmd = readonly
+    ? ["tmux", "attach", "-r", "-t", sessionId]
+    : ["tmux", "attach", "-t", sessionId];
 
   let pty: PtySession;
   try {
-    pty = await target.openPty(["tmux", "attach", "-d", "-t", sessionId], cols, rows);
+    pty = await target.openPty(attachCmd, cols, rows);
   } catch (e) {
     log("exec failed", e);
     socket.close(4500, "exec failed");
@@ -69,6 +77,7 @@ export async function wireAttach(
         }
       } catch {}
     }
+    if (readonly) return;
     if (stream.writable) {
       stream.write(typeof data === "string" ? Buffer.from(data) : data);
     }

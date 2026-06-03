@@ -4,7 +4,7 @@ import type { PodTarget } from "./targets/types.js";
 import { consume } from "./spool-stream.js";
 import { extractForwardable } from "./transcript.js";
 import { sendChatMessage } from "./notifier.js";
-import { listChatSessions, getTranscriptCursor, setTranscriptCursor, type ChatSession } from "./chat-store.js";
+import { listChatSessions, getTranscriptCursor, setTranscriptCursor, getReplyChat, type ChatSession } from "./chat-store.js";
 
 const RECONCILE_MS = 10_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -81,7 +81,8 @@ async function runTailer(bridge: Bridge, t: Tailer): Promise<void> {
         (line) => {
           for (const m of extractForwardable(line)) {
             if (m.role !== "assistant" || !m.text) continue;
-            sendChatMessage(chat.chatId, prefix, m.text).catch(() => {});
+            const target = getReplyChat(chat.podId, chat.sessionId) ?? chat.chatId;
+            sendChatMessage(target, prefix, m.text).catch(() => {});
             if (m.uuid) lastUuid = m.uuid;
           }
         },
